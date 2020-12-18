@@ -36,6 +36,10 @@ public:
     const std::shared_ptr<std::vector<int>> &GetNeighbors() const { return neighbors_; }
     int GetNeighborCount() const { return adj_.size(); }
 
+    void SetId(int id) { id_ = id; }
+    void SetLabel(const std::string &label) { label_ = label; }
+    void AddNeighbor(int neighbor_id) { neighbors_.push_back(neighbor_id); }
+
     double GetMemory() const
     {
         double ret = sizeof(int) + neighbors_->size() * sizeof(int);
@@ -90,6 +94,9 @@ public:
     int GetSupport() const { return support_; }
     const std::shared_ptr<std::vector<Vertex>> &GetVertices() const { return vertices_; }
     const std::shared_ptr<std::vector<Edge>> &GetEdges() const { return edges_; }
+    void AddVertex(const Vertex &v) { vertices_.push_back(v); }
+    void AddEdge(const Edge &e) { edges_.push_back(e) }
+    bool Empty() const { return vertices_.empty() && edges_.empty(); }
 
 private:
     int id_;
@@ -97,3 +104,60 @@ private:
     std::shared_ptr<std::vector<Vertex>> vertices_;
     std::shared_ptr<std::vector<Edge>> edges_;
 }
+
+int
+ReadInt(const std::string &line, size_t &ptr)
+{
+    int ret = 0;
+    while (ptr < line.size() && !isdigit(line.at(ptr)))
+        ++ptr;
+    CHECK(ptr < line.size()) << "Invalid Input";
+    while (ptr < line.size() && isdigit(line.at(ptr)))
+    {
+        ret = ret * 10 + line.at(ptr) - '0';
+        ++ptr;
+    }
+    return ret;
+}
+
+void ParseLine(const std::string &line, Graph &g)
+{
+    size_t ptr = 0;
+    if (line[0] == '#')
+    {
+        // New graph. Create a new Graph object.
+        // g = new Graph(); do nothing.
+    }
+    else if (line[0] == 'v')
+    {
+        // New vertex.
+        ptr++;
+        int v_id = ReadInt(line, ptr);
+        int v_label = ReadInt(line, ptr);
+        Vertex new_vertex;
+        new_vertex.SetId(v_id);
+        new_vertex.SetLabel(v_label);
+        g.AddVertex(new_vertex);
+    }
+    else if (line[0] == 'e')
+    {
+        // New edge.
+        ptr++;
+        int e_id = ReadInt(line, ptr);
+        int e_from = ReadInt(line, ptr);
+        int e_to = ReadInt(line, ptr);
+        int e_label = ReadInt(line, ptr);
+        Edge new_edge(e_id, e_label, e_from, e_to);
+        g.AddEdge(new_edge);
+        auto vertices = g.GetVertices();
+        CHECK(vertices.size() > e_from && vertices.size() > e_to) << "invalid edge";
+        vertices->at(e_from).AddNeighbor(e_to);
+        vertices->at(e_to).AddNeighbor(e_from);
+    }
+    else
+    {
+        CHECK(false) << "Invalid input."
+    }
+}
+
+
