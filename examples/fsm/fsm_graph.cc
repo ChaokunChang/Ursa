@@ -26,9 +26,9 @@ using axe::base::Tokenizer;
 
 class Neighbor
 {
+public:
     Neighbor() {}
-    Neighbor(int e_id.int v_id, std
-             : string e_label) : v_id_(v_id), e_id_(e_id), e_label_(e_label) {}
+    Neighbor(int e_id, int v_id, int e_label) : v_id_(v_id), e_id_(e_id), e_label_(e_label) {}
 
     int GetVId() const { return v_id_; }
     int GetEId() const { return e_id_; }
@@ -43,24 +43,24 @@ class Neighbor
 private:
     int e_id_;
     int v_id_;
-    std::string e_label_;
-}
+    int e_label_;
+};
 
 class Vertex
 {
 public:
     Vertex() : neighbors_(std::make_shared<std::vector<Neighbor>>()) {}
-    Vertex(int id, std::string label,
+    Vertex(int id, int label,
            const std::shared_ptr<std::vector<Neighbor>> &neighbors) : id_(id), label_(label), neighbors_(neighbors) {}
 
     int GetId() const { return id_; }
-    std::string GetLabel() const { return label_; }
+    int GetLabel() const { return label_; }
     const std::shared_ptr<std::vector<Neighbor>> &GetNeighbors() const { return neighbors_; }
-    int GetNeighborCount() const { return adj_.size(); }
+    int GetNeighborCount() const { return neighbors_->size(); }
 
     void SetId(int id) { id_ = id; }
-    void SetLabel(const std::string &label) { label_ = label; }
-    void AddNeighbor(Neighbor neighbor) { neighbors_.push_back(neighbor); }
+    void SetLabel(const int &label) { label_ = label; }
+    void AddNeighbor(const Neighbor &neighbor) { neighbors_->push_back(neighbor); }
 
     double GetMemory() const
     {
@@ -75,32 +75,31 @@ public:
 
 private:
     int id_;
-    std::string label_;
+    int label_;
     std::shared_ptr<std::vector<Neighbor>> neighbors_; // store the vetex.id of neighbors.
 };
 
 class Graph
 {
 public:
-    Vertex() : vertices_(std::make_shared<std::vector<Vertex>>()) {}
-    Vertex(int id, int support,
-           const std::shared_ptr<std::vector<Vertex>> &vertices) : id_(id), support_(support), vertices_(vertices) {}
+    Graph() : vertices_(std::make_shared<std::vector<Vertex>>()) {}
+    Graph(int id, int support,
+          const std::shared_ptr<std::vector<Vertex>> &vertices) : id_(id), support_(support), vertices_(vertices) {}
 
     int GetId() const { return id_; }
     int GetSupport() const { return support_; }
     void SetId(int id) { id_ = id; }
     void SetSupport(int support) { support_ = support; }
     const std::shared_ptr<std::vector<Vertex>> &GetVertices() const { return vertices_; }
-    void AddVertex(const Vertex &vertex) { vertices_.push_back(vertex); }
+    void AddVertex(const Vertex &vertex) { vertices_->push_back(vertex); }
 
 private:
     int id_;
     int support_;
     std::shared_ptr<std::vector<Vertex>> vertices_;
-}
+};
 
-int
-ReadInt(const std::string &line, size_t &ptr)
+int ReadInt(const std::string &line, size_t &ptr)
 {
     int ret = 0;
     while (ptr < line.size() && !isdigit(line.at(ptr)))
@@ -112,7 +111,7 @@ ReadInt(const std::string &line, size_t &ptr)
         ++ptr;
     }
     return ret;
-}
+};
 
 DatasetPartition<Graph> ParseLineGraph(const std::string &line)
 {
@@ -136,7 +135,7 @@ DatasetPartition<Graph> ParseLineGraph(const std::string &line)
     DatasetPartition<Graph> ret;
     ret.push_back(g);
     return ret;
-}
+};
 
 DatasetPartition<Vertex> ParseLineVertex(const std::string &line)
 {
@@ -158,7 +157,7 @@ DatasetPartition<Vertex> ParseLineVertex(const std::string &line)
     DatasetPartition<Vertex> ret;
     ret.push_back(vertex);
     return ret;
-}
+};
 
 class FSMNaive : public Job
 {
@@ -184,10 +183,14 @@ public:
         // graph.UpdatePartition([](DatasetPartition<Vertex> &data) {
         //     std::sort(data.begin(), data.end(), [](const Vertex &a, const Vertex &b) { return a.GetId() < b.GetId(); });
         // }); // If n_partitions=1, in fact this is not needed as the data is sorted by default.
+        auto shared_graph = std::make_shared<axe::common::Dataset<Vertex>>(graph);
 
         auto graphs = graph.MapPartition([](const DatasetPartition<Vertex> &data) {
             DatasetPartition<Graph> ret;
-            ret.push_back(Graph(0, 1, data));
+            auto vertices = std::make_shared<std::vector<Vertex>>();
+            for (auto &v : data)
+                vertices->push_back(v);
+            ret.push_back(Graph(0, 1, vertices));
             return ret;
         });
         auto shared_graphs = std::make_shared<axe::common::Dataset<Graph>>(graphs); // The big single graph G , with id=0, and support=1.
@@ -197,6 +200,149 @@ public:
         //     return ret;
         // }));
 
-        auto start_candidates = graph.ReduceBy([](const Vertex &v) { return v.GetLabel(); }, []());
+        auto start_candidates_label = graph.MapPartition([](const DatasetPartition<Vertex> &data) {
+                                               DatasetPartition<std::pair<int, int>> ret;
+                                               for (const auto &v : data)
+                                                   ret.push_back(std::make_pair(v.GetLabel(), 1));
+                                               return ret;
+                                           })
+                                          .ReduceBy([](const std::pair<int, int> v_c) { return v_c.first.GetLabel(); },
+                                                    [](std::pair<int, int> &agg, const std::pair<int, int> &update) { agg.second += update.second; })
+                                          .MapPartition([](const DatasetPartition<std::pair<int, int>> &data) {
+                                              DatasetPartition<std::pair<int, int>> ret;
+                                              for (const auto &label_count : data)
+                                              {
+                                                  if (label_count.second >= minimal_support)
+                                                  {
+                                                      ret.push_back(label_count);
+                                                  }
+                                              }
+                                              return ret;
+                                          })
+                                          .PartitionBy([](const std::pair<int, int> &) { return 0; }, 1);
+
+        // auto start_vertices = start_candidates_label.MapPartition([](const DatasetPartition<std::pair<int, int>> data) {
+        //     DatasetPartition<std::pair<Vertex, int>> ret;
+        //     for (int i = 0; i < data.size(); i++)
+        //     {
+        //         Vertex vertex;
+        //         vertex.SetId(i); // this is a subgraph, or pattern to identify.
+        //         vertex.SetLabel(data.at(i).first);
+        //         ret.push_back(std::make_pair(vertex, data.at(i).second));
+        //     }
+        //     return ret;
+        // });
+
+        // auto candidates = std::make_shared<axe::common::Dataset<Graph>>(start_vertices.MapPartition([](const DatasetPartition<std::pair<Vertex, int>> &data) {
+        //     DatasetPartition<Graph> ret;
+        //     for (int i = 0; i < data.size(); i++)
+        //     {
+        //         ret.push_back(Graph(i, data.at(i).second, data.at(i).first));
+        //     }
+        //     return ret;
+        // }));
+        // auto result = candidates;
+
+        // auto extend_subgraph = [](const DatasetPartition<Graph> &subgraph, const DatasetPartition<Graph> &src_graph) {
+
+        // };
+        // // main loop
+        // for (int i = 0; i < n_iters; ++i)
+        // {
+
+        // }
+
+        auto get_graphs_with_vertex_label = [](const DatasetPartition<std::pair<int, int>> &labels, const DatasetPartition<Vertex> &src_graph) {
+            DatasetPartition<Graph> ret;
+            for (const auto &v : src_graph)
+            {
+                for (const auto &label : labels)
+                {
+                    if (label.first == v.GetLabel())
+                    {
+                        Vertex new_vertex;
+                        new_vertex.SetId(v.GetId());
+                        new_vertex.SetLabel(v.GetLabel());
+
+                        auto vertices = std::make_shared<std::vector<Vertex>>();
+                        vertices->push_back(new_vertex);
+                        ret.push_back(Graph(0, label.second, vertices));
+                        break;
+                    }
+                }
+            }
+            return ret;
+        };
+        auto start_candidates = start_candidates_label.SharedDataMapPartitionWith(shared_graph.get(), get_graphs_with_vertex_label);
+        auto results = start_candidates;
+        auto extend_subgraph = [](const DatasetPartition<Graph> &subgraph, const DatasetPartition<Graph> &src_graph) {
+            DatasetPartition<Graph> extended_subgraphs;
+            auto src_vertices = *src_graph.at(0).GetVertices();
+            for (const auto &graph : subgraph)
+            {
+                // For each candidate subgraph, try to get a lot of extended graph from it.
+                int sg_v_i = 0;
+                for (const auto &sg_vertex : *graph.GetVertices();)
+                {
+                    // We extend a subgraph based on its vertex by adding edge on vertex.
+                    const auto &src_vertex = src_vertices.at(sg_vertex.GetId());
+                    if (sg_vertex.GetNeighborCount() < src_vertex.GetNeighborCount())
+                    {
+                        // If the neighbour count of the subgraph-vertex is less than src vertex,
+                        // that means we can extend a edge on subgraph-vertex, and then get a new candidate.
+                        for (const auto &src_neighbor : *src_vertex.GetNeighbors())
+                        {
+                            bool existing = false;
+                            // If the edge in src_vertex is existing in subgraph, then we go on to next edge.
+                            for (const auto &sg_neighbor : *sg_vertex.GetNeighbors())
+                            {
+                                if (sg_neighbor.GetELabel() == src_neighbor.GetELabel() && sg_neighbor.GetVId() == src_neighbor.GetVId())
+                                {
+                                    existing = true;
+                                    break;
+                                }
+                            }
+                            if (!existing)
+                            {
+                                // We can add this edge in src_vertex to subgraph.
+                                auto new_sg_vertices = std::make_shared<std::vector<Vertex>>();
+                                Graph new_graph(0, 1, new_sg_vertices);
+                                (*new_graph.GetVertices()) = *graph.GetVertices(); // should be a deep copy.
+
+                                (*new_graph.GetVertices()).at(sg_v_i).AddNeighbor(src_neighbor); // Add the new edge to the new_subgraph.
+                                CHECK_EQ((*new_graph.GetVertices()).at(sg_v_i).GetNeighborCount() == *graph.GetVertices().at(sg_v_i).GetNeighborCount() + 1);
+
+                                extended_subgraphs.push_back(new_graph)
+                            }
+                        }
+                    }
+                    sg_v_i++;
+                }
+            }
+            return extended_subgraphs;
+        };
+        auto subgraph_isomorphism = [](const DatasetPartition<Graph> &subgraph, const DatasetPartition<Graph> &src_graph) {
+            return subgraph;
+        };
+        auto update_results = [](DatasetPartition<Graph> &results, const DatasetPartition<Graph> &new_candidate) {
+            results.AppendPartition(new_candidate);
+        };
+
+        auto candidates = std::make_shared<axe::common::Dataset<Graph>>(start_candidates);
+        for (size_t i = 0; i < n_iters; i++)
+        {
+            candidates = std::make_shared<axe::common::Dataset<Graph>>(
+                (*candidates).MapPartitionWith(shared_graphs.get(), extend_subgraph).MapPartitionWith(shared_graphs.get(), subgraph_isomorphism));
+            results.UpdatePartitionWith(candidates.get(), update_results);
+        }
+
+        results.ApplyRead([](const DatasetPartition<Graph> &data) {
+            for (auto &graph : data)
+            {
+                LOG(INFO) << "frequent subgraph: (" << graph.GetVertices() << ")@support=" << graph.GetSupport();
+            }
+            google::FlushLogFiles(google::INFO);
+        });
+        axe::common::JobDriver::ReversePrintTaskGraph(*tg);
     }
-}
+};
