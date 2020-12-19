@@ -326,7 +326,7 @@ public:
                                         break;
                                     }
                                 }
-                                if (!edge_existed){
+                                if (!neigher_existed){
                                     Vertex new_neighbor_vertex;
                                     new_neighbor_vertex.SetId(src_neighbor.GetVId());
                                     new_neighbor_vertex.SetLabel(src_vertices.at(src_neighbor.GetVId()).GetLabel());
