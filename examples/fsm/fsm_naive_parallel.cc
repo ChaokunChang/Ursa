@@ -214,7 +214,7 @@ public:
                                            })
                                           .ReduceBy([](const std::pair<LabelType, int> v_c) { return v_c.first.GetLabel(); },
                                                     [](std::pair<LabelType, int> &agg, const std::pair<LabelType, int> &update) { agg.second += update.second; })
-                                          .MapPartition([](const DatasetPartition<std::pair<LabelType, int>> &data) {
+                                          .MapPartition([minimal_support](const DatasetPartition<std::pair<LabelType, int>> &data) {
                                               DatasetPartition<std::pair<LabelType, int>> ret;
                                               for (const auto &label_count : data)
                                               {
