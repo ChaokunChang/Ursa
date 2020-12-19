@@ -87,6 +87,11 @@ public:
     Graph() : vertices_(std::make_shared<std::vector<Vertex>>()) {}
     Graph(int id, int support,
           const std::shared_ptr<std::vector<Vertex>> &vertices) : id_(id), support_(support), vertices_(vertices) {}
+    Graph(const Graph& graph) {
+        this->id_ = graph.id_;
+        this->support_ = graph.support_;
+        this->vertices_ = std::make_shared(std::vector<Vertex>(*graph.vertices));
+    }
 
     int GetId() const { return id_; }
     int GetSupport() const { return support_; }
@@ -466,9 +471,8 @@ public:
                             continue;
                         }
 
-                        // TODO(Chenxia): add construction function for Graph
-                        auto new_cand_subgraph = std::make_shared<Graph(cand_subgraph));
-                        auto new_cand_map = std::make_shared<std::map<Vertex, Vertex>>(cand_map);
+                        auto new_cand_subgraph = std::make_shared<Graph(*cand_subgraph));
+                        auto new_cand_map = std::make_shared<std::map<Vertex, Vertex>>(*cand_map);
 
                         new_cand_subgraph.AddVertex(src_vertex);
                         new_cand_map->at(sg_vertex) = src_vertex;
