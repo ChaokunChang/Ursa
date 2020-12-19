@@ -281,8 +281,14 @@ public:
             for (const auto &graph : subgraph)
             {
                 // For each candidate subgraph, try to get a lot of extended graph from it.
+
+                std::vector<int> sg_vids; // The vertex Id of all the vertices in the subgraph.
+                for (const auto &sg_vertex : *graph.GetVertices()){
+                    sg_vids.push_back(sg_vertex.GetId());
+                }
+
                 int sg_v_i = 0;
-                for (const auto &sg_vertex : *graph.GetVertices();)
+                for (const auto &sg_vertex : *graph.GetVertices())
                 {
                     // We extend a subgraph based on its vertex by adding edge on vertex.
                     const auto &src_vertex = src_vertices.at(sg_vertex.GetId());
@@ -292,17 +298,17 @@ public:
                         // that means we can extend a edge on subgraph-vertex, and then get a new candidate.
                         for (const auto &src_neighbor : *src_vertex.GetNeighbors())
                         {
-                            bool existing = false;
+                            bool edge_existed = false;
                             // If the edge in src_vertex is existing in subgraph, then we go on to next edge.
                             for (const auto &sg_neighbor : *sg_vertex.GetNeighbors())
                             {
                                 if (sg_neighbor.GetELabel() == src_neighbor.GetELabel() && sg_neighbor.GetVId() == src_neighbor.GetVId())
                                 {
-                                    existing = true;
+                                    edge_existed = true;
                                     break;
                                 }
                             }
-                            if (!existing)
+                            if (!edge_existed)
                             {
                                 // We can add this edge in src_vertex to subgraph.
                                 auto new_sg_vertices = std::make_shared<std::vector<Vertex>>();
@@ -311,6 +317,23 @@ public:
 
                                 (*new_graph.GetVertices()).at(sg_v_i).AddNeighbor(src_neighbor); // Add the new edge to the new_subgraph.
                                 CHECK_EQ((*new_graph.GetVertices()).at(sg_v_i).GetNeighborCount() == *graph.GetVertices().at(sg_v_i).GetNeighborCount() + 1);
+                                
+                                // If the neighbor vertex of this edge doesn't exist in the subgraph, add it.
+                                bool neigher_existed = false;
+                                for (size_t i=0; i<sg_vids.size(); i++){
+                                    if (sg_vids[i] == src_neighbor.GetVId()){
+                                        neigher_existed = true;
+                                        break;
+                                    }
+                                }
+                                if (!edge_existed){
+                                    Vertex new_neighbor_vertex;
+                                    new_neighbor_vertex.SetId(src_neighbor.GetVId());
+                                    new_neighbor_vertex.SetLabel(src_vertices.at(src_neighbor.GetVId()).GetLabel());
+                                    new_neighbor_vertex.AddNeighbor(Neighbor(src_neighbor.GetEId(), sg_v_i, src_neighbor.GetELabel()));
+
+                                    new_graph.AddVertex(new_neighbor_vertex);
+                                }
 
                                 extended_subgraphs.push_back(new_graph)
                             }
@@ -321,8 +344,13 @@ public:
             }
             return extended_subgraphs;
         };
-        auto subgraph_isomorphism = [](const DatasetPartition<Graph> &subgraph, const DatasetPartition<Graph> &src_graph) {
-            return subgraph;
+        auto subgraph_isomorphism = [](const DatasetPartition<Graph> &subgraphs, const DatasetPartition<Graph> &src_graph) {
+            // subgraph: a lot of candidate subgraphs
+            // src_graph: the original big graph
+            // progress: iterate over each subgraph, calculate its support in src_graph
+            // return: the candidate that support is over minimal_support. 
+            DatasetPartition<Graph> frequent_subgraphs;
+            return frequent_subgraphs;
         };
         auto update_results = [](DatasetPartition<Graph> &results, const DatasetPartition<Graph> &new_candidate) {
             results.AppendPartition(new_candidate);
