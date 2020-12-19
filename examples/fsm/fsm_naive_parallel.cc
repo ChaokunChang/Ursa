@@ -395,7 +395,7 @@ public:
                 // Prepare
                 size_t subgraph_size = subgraph.GetVertices()->size();
                 // from/to id and edge in subgraph
-                std::map<std::tuple<int, int>, int> sg_edge_labels;
+                std::map<std::tuple<int, int>, LabelType> sg_edge_labels;
                 for (const auto &sg_vertex : *subgraph.GetVertices()) {
                     for (const auto &sg_neighbor : *sg_vertex.GetNeighbors()) {
                         auto key = std::make_tuple(sg_vertex.GetId(), sg_neighbor.GetVId());
@@ -482,7 +482,7 @@ public:
                             bool isomorphism = true;
 
                             // from/to id and edge in candidate subgraph
-                            std::map<std::tuple<int, int>, int> src_edge_labels;
+                            std::map<std::tuple<int, int>, LabelType> src_edge_labels;
                             for (const auto &src_vertex : *new_cand_subgraph->GetVertices()) {
                                 for (const auto &src_neighbor : *src_vertex.GetNeighbors()) {
                                     auto key = std::make_tuple(src_vertex.GetId(), src_neighbor.GetVId());
