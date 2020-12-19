@@ -24,15 +24,17 @@
 
 using axe::base::Tokenizer;
 
+typedef int LabelType;
+
 class Neighbor
 {
 public:
     Neighbor() {}
-    Neighbor(int e_id, int v_id, int e_label) : v_id_(v_id), e_id_(e_id), e_label_(e_label) {}
+    Neighbor(int e_id, int v_id, LabelType e_label) : v_id_(v_id), e_id_(e_id), e_label_(e_label) {}
 
     int GetVId() const { return v_id_; }
     int GetEId() const { return e_id_; }
-    int GetELabel() const { return e_label_ }
+    LabelType GetELabel() const { return e_label_ }
 
     bool operator<(const Neighbor &other) const { return e_id_ < other.e_id_; }
     bool operator==(const Neighbor &other) const { return e_id_ == other.e_id_; }
@@ -43,23 +45,23 @@ public:
 private:
     int e_id_;
     int v_id_;
-    int e_label_;
+    LabelType e_label_;
 };
 
 class Vertex
 {
 public:
     Vertex() : neighbors_(std::make_shared<std::vector<Neighbor>>()) {}
-    Vertex(int id, int label,
+    Vertex(int id, LabelType label,
            const std::shared_ptr<std::vector<Neighbor>> &neighbors) : id_(id), label_(label), neighbors_(neighbors) {}
 
     int GetId() const { return id_; }
-    int GetLabel() const { return label_; }
+    LabelType GetLabel() const { return label_; }
     const std::shared_ptr<std::vector<Neighbor>> &GetNeighbors() const { return neighbors_; }
     int GetNeighborCount() const { return neighbors_->size(); }
 
     void SetId(int id) { id_ = id; }
-    void SetLabel(const int &label) { label_ = label; }
+    void SetLabel(const LabelType &label) { label_ = label; }
     void AddNeighbor(const Neighbor &neighbor) { neighbors_->push_back(neighbor); }
 
     double GetMemory() const
@@ -75,7 +77,7 @@ public:
 
 private:
     int id_;
-    int label_;
+    LabelType label_;
     std::shared_ptr<std::vector<Neighbor>> neighbors_; // store the vetex.id of neighbors.
 };
 
@@ -113,13 +115,17 @@ int ReadInt(const std::string &line, size_t &ptr)
     return ret;
 };
 
+LabelType ReadLabel(const std::string &line, size_t &ptr){
+    return LabelType(ReadInt(line, ptr));
+}
+
 DatasetPartition<Graph> ParseLineGraph(const std::string &line)
 {
     Graph g;
     size_t ptr = 0;
     Vertex vertex;
     int v_id = ReadInt(line, ptr);
-    int v_label = ReadInt(line, ptr);
+    LabelType v_label = ReadLabel(line, ptr);
     vertex.SetId(v_id);
     vertex.SetLabel(v_label);
     int neighbor_count = ReadInt(line, ptr);
@@ -127,7 +133,7 @@ DatasetPartition<Graph> ParseLineGraph(const std::string &line)
     {
         int e_id = ReadInt(line, ptr);
         int e_to = ReadInt(line, ptr);
-        int e_label = ReadInt(line, ptr);
+        LabelType e_label = ReadLabel(line, ptr);
         Neighbor neighbor(e_id, e_to, e_label);
         vertex.AddNeighbor(neighbor);
     }
@@ -142,7 +148,7 @@ DatasetPartition<Vertex> ParseLineVertex(const std::string &line)
     size_t ptr = 0;
     Vertex vertex;
     int v_id = ReadInt(line, ptr);
-    int v_label = ReadInt(line, ptr);
+    LabelType v_label = ReadLabel(line, ptr);
     vertex.SetId(v_id);
     vertex.SetLabel(v_label);
     int neighbor_count = ReadInt(line, ptr);
@@ -150,7 +156,7 @@ DatasetPartition<Vertex> ParseLineVertex(const std::string &line)
     {
         int e_id = ReadInt(line, ptr);
         int e_to = ReadInt(line, ptr);
-        int e_label = ReadInt(line, ptr);
+        LabelType e_label = ReadLabel(line, ptr);
         Neighbor neighbor(e_id, e_to, e_label);
         vertex.AddNeighbor(neighbor);
     }
@@ -164,8 +170,8 @@ class FSMNaive : public Job
 public:
     void Run(TaskGraph *tg, const std::shared_ptr<Properties> &config) const override
     {
-        auto input = config->GetOrSet("graph", "/graph/google-adj");
-        int n_partitions = std::stoi(config->GetOrSet("parallelism", "1"));
+        auto input = config->GetOrSet("graph", "dataset/citeseer.lg");
+        int n_partitions = std::stoi(config->GetOrSet("parallelism", "5"));
         int minimal_support = std::stoi(config->GetOrSet("minimal_support", "5"));
         int n_iters = std::stoi(config->GetOrSet("n_iters", "5")); // the max number of edges in frequent subgraph.
         // means the graph is composed by a list of vertex.
@@ -201,15 +207,15 @@ public:
         // }));
 
         auto start_candidates_label = graph.MapPartition([](const DatasetPartition<Vertex> &data) {
-                                               DatasetPartition<std::pair<int, int>> ret;
+                                               DatasetPartition<std::pair<LabelType, int>> ret;
                                                for (const auto &v : data)
                                                    ret.push_back(std::make_pair(v.GetLabel(), 1));
                                                return ret;
                                            })
-                                          .ReduceBy([](const std::pair<int, int> v_c) { return v_c.first.GetLabel(); },
-                                                    [](std::pair<int, int> &agg, const std::pair<int, int> &update) { agg.second += update.second; })
-                                          .MapPartition([](const DatasetPartition<std::pair<int, int>> &data) {
-                                              DatasetPartition<std::pair<int, int>> ret;
+                                          .ReduceBy([](const std::pair<LabelType, int> v_c) { return v_c.first.GetLabel(); },
+                                                    [](std::pair<LabelType, int> &agg, const std::pair<LabelType, int> &update) { agg.second += update.second; })
+                                          .MapPartition([](const DatasetPartition<std::pair<LabelType, int>> &data) {
+                                              DatasetPartition<std::pair<LabelType, int>> ret;
                                               for (const auto &label_count : data)
                                               {
                                                   if (label_count.second >= minimal_support)
@@ -219,7 +225,7 @@ public:
                                               }
                                               return ret;
                                           })
-                                          .PartitionBy([](const std::pair<int, int> &) { return 0; }, 1);
+                                          .PartitionBy([](const std::pair<LabelType, int> &) { return 0; }, 1);
 
         // auto start_vertices = start_candidates_label.MapPartition([](const DatasetPartition<std::pair<int, int>> data) {
         //     DatasetPartition<std::pair<Vertex, int>> ret;
@@ -252,7 +258,7 @@ public:
 
         // }
 
-        auto get_graphs_with_vertex_label = [](const DatasetPartition<std::pair<int, int>> &labels, const DatasetPartition<Vertex> &src_graph) {
+        auto get_graphs_with_vertex_label = [](const DatasetPartition<std::pair<LabelType, int>> &labels, const DatasetPartition<Vertex> &src_graph) {
             DatasetPartition<Graph> ret;
             for (const auto &v : src_graph)
             {
@@ -275,20 +281,20 @@ public:
         };
         auto start_candidates = start_candidates_label.SharedDataMapPartitionWith(shared_graph.get(), get_graphs_with_vertex_label);
         auto results = start_candidates;
-        auto extend_subgraph = [](const DatasetPartition<Graph> &subgraph, const DatasetPartition<Graph> &src_graph) {
+        auto extend_subgraph = [](const DatasetPartition<Graph> &subgraphs, const DatasetPartition<Graph> &src_graph) {
             DatasetPartition<Graph> extended_subgraphs;
             auto src_vertices = *src_graph.at(0).GetVertices();
-            for (const auto &graph : subgraph)
+            for (const auto &subgraph : subgraphs)
             {
                 // For each candidate subgraph, try to get a lot of extended graph from it.
 
                 std::vector<int> sg_vids; // The vertex Id of all the vertices in the subgraph.
-                for (const auto &sg_vertex : *graph.GetVertices()){
+                for (const auto &sg_vertex : *subgraph.GetVertices()){
                     sg_vids.push_back(sg_vertex.GetId());
                 }
 
                 int sg_v_i = 0;
-                for (const auto &sg_vertex : *graph.GetVertices())
+                for (const auto &sg_vertex : *subgraph.GetVertices())
                 {
                     // We extend a subgraph based on its vertex by adding edge on vertex.
                     const auto &src_vertex = src_vertices.at(sg_vertex.GetId());
@@ -313,10 +319,10 @@ public:
                                 // We can add this edge in src_vertex to subgraph.
                                 auto new_sg_vertices = std::make_shared<std::vector<Vertex>>();
                                 Graph new_graph(0, 1, new_sg_vertices);
-                                (*new_graph.GetVertices()) = *graph.GetVertices(); // should be a deep copy.
+                                (*new_graph.GetVertices()) = *subgraph.GetVertices(); // should be a deep copy.
 
                                 (*new_graph.GetVertices()).at(sg_v_i).AddNeighbor(src_neighbor); // Add the new edge to the new_subgraph.
-                                CHECK_EQ((*new_graph.GetVertices()).at(sg_v_i).GetNeighborCount() == *graph.GetVertices().at(sg_v_i).GetNeighborCount() + 1);
+                                CHECK_EQ((*new_graph.GetVertices()).at(sg_v_i).GetNeighborCount() == *subgraph.GetVertices().at(sg_v_i).GetNeighborCount() + 1);
                                 
                                 // If the neighbor vertex of this edge doesn't exist in the subgraph, add it.
                                 bool neigher_existed = false;
