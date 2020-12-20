@@ -24,7 +24,7 @@
 
 using axe::base::Tokenizer;
 
-typedef int LabelType;
+using LabelType = int;
 
 class Neighbor
 {
@@ -132,7 +132,7 @@ DatasetPartition<Graph> ParseLineGraph(const std::string &line)
     int neighbor_count = ReadInt(line, ptr);
     for (int i = 0; i < neighbor_count; i++)
     {
-        int e_id = ReadInt(line, ptr);
+        int e_id = 0;
         int e_to = ReadInt(line, ptr);
         LabelType e_label = ReadLabel(line, ptr);
         Neighbor neighbor(e_id, e_to, e_label);
@@ -155,7 +155,7 @@ DatasetPartition<Vertex> ParseLineVertex(const std::string &line)
     int neighbor_count = ReadInt(line, ptr);
     for (int i = 0; i < neighbor_count; i++)
     {
-        int e_id = ReadInt(line, ptr);
+        int e_id = 0;
         int e_to = ReadInt(line, ptr);
         LabelType e_label = ReadLabel(line, ptr);
         Neighbor neighbor(e_id, e_to, e_label);
@@ -166,7 +166,7 @@ DatasetPartition<Vertex> ParseLineVertex(const std::string &line)
     return ret;
 };
 
-class FSMNaive : public Job
+class FSMNaiveParallel : public Job
 {
 public:
     void Run(TaskGraph *tg, const std::shared_ptr<Properties> &config) const override
@@ -222,37 +222,6 @@ public:
                                               return ret;
                                           }); // currently each paration will have a set of frequent_vertex_labels with their support.
                                               //   .PartitionBy([](const std::pair<LabelType, int> &) { return 0; }, 1); // aggregate the partitions to on partition.
-
-        // auto start_vertices = start_candidates_label.MapPartition([](const DatasetPartition<std::pair<int, int>> data) {
-        //     DatasetPartition<std::pair<Vertex, int>> ret;
-        //     for (int i = 0; i < data.size(); i++)
-        //     {
-        //         Vertex vertex;
-        //         vertex.SetId(i); // this is a subgraph, or pattern to identify.
-        //         vertex.SetLabel(data.at(i).first);
-        //         ret.push_back(std::make_pair(vertex, data.at(i).second));
-        //     }
-        //     return ret;
-        // });
-
-        // auto candidates = std::make_shared<axe::common::Dataset<Graph>>(start_vertices.MapPartition([](const DatasetPartition<std::pair<Vertex, int>> &data) {
-        //     DatasetPartition<Graph> ret;
-        //     for (int i = 0; i < data.size(); i++)
-        //     {
-        //         ret.push_back(Graph(i, data.at(i).second, data.at(i).first));
-        //     }
-        //     return ret;
-        // }));
-        // auto result = candidates;
-
-        // auto extend_subgraph = [](const DatasetPartition<Graph> &subgraph, const DatasetPartition<Graph> &src_graph) {
-
-        // };
-        // // main loop
-        // for (int i = 0; i < n_iters; ++i)
-        // {
-
-        // }
 
         auto get_graphs_with_vertex_label = [](const DatasetPartition<Vertex> &src_graph, const DatasetPartition<std::pair<LabelType, int>> &labels) {
             DatasetPartition<Graph> ret;
@@ -379,7 +348,7 @@ public:
             }
             return extended_subgraphs;
         };
-        auto subgraph_isomorphism = [](const DatasetPartition<Graph> &subgraphs, const DatasetPartition<Graph> &src_graph) {
+        auto frequent_subgraph_isomorphism = [](const DatasetPartition<Graph> &subgraphs, const DatasetPartition<Graph> &src_graph) {
             // subgraph: a lot of candidate subgraphs
             // src_graph: the original big graph
             // progress: iterate over each subgraph, calculate its support in src_graph
@@ -391,10 +360,11 @@ public:
             results.AppendPartition(new_candidate);
         };
 
+        // main loop
         auto candidates = start_candidates;
         for (size_t i = 0; i < n_iters; i++)
         {
-            candidates = candidates.MapPartitionWith(shared_graphs.get(), extend_subgraph).MapPartitionWith(shared_graphs.get(), subgraph_isomorphism);
+            candidates = candidates.MapPartitionWith(shared_graphs.get(), extend_subgraph).MapPartitionWith(shared_graphs.get(), frequent_subgraph_isomorphism);
             results.UpdatePartitionWith(&candidates, update_results);
         }
 

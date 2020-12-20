@@ -24,6 +24,8 @@
 
 using axe::base::Tokenizer;
 
+using LabelType = int;
+
 class Neighbor
 {
 public:
@@ -125,7 +127,7 @@ DatasetPartition<Graph> ParseLineGraph(const std::string &line)
     int neighbor_count = ReadInt(line, ptr);
     for (int i = 0; i < neighbor_count; i++)
     {
-        int e_id = ReadInt(line, ptr);
+        int e_id = 0;
         int e_to = ReadInt(line, ptr);
         int e_label = ReadInt(line, ptr);
         Neighbor neighbor(e_id, e_to, e_label);
@@ -148,7 +150,7 @@ DatasetPartition<Vertex> ParseLineVertex(const std::string &line)
     int neighbor_count = ReadInt(line, ptr);
     for (int i = 0; i < neighbor_count; i++)
     {
-        int e_id = ReadInt(line, ptr);
+        int e_id = 0;
         int e_to = ReadInt(line, ptr);
         int e_label = ReadInt(line, ptr);
         Neighbor neighbor(e_id, e_to, e_label);
@@ -356,6 +358,7 @@ public:
             results.AppendPartition(new_candidate);
         };
 
+        // main loop
         auto candidates = std::make_shared<axe::common::Dataset<Graph>>(start_candidates);
         for (size_t i = 0; i < n_iters; i++)
         {
