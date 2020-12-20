@@ -419,20 +419,20 @@ public:
                     return frequent_subgraphs;
                 }
                 // Enumerate all possible graphs and its mapping
-                std::stack<std::pair<std::shared_ptr<Graph>, std::shared_ptr<std::map<Vertex, Vertex>>>> cand_subgraphs;
+                std::stack<std::pair<std::shared_ptr<Graph>, std::shared_ptr<std::map<int, int>>>> cand_subgraphs;
                 // Add first possible vertices to stack
                 auto first_sg_vertex = vertices_mapping_vec.at(0).first;
                 auto first_src_vertices = vertices_mapping_vec.at(0).second;
                 for (const auto &first_src_vertex : *first_src_vertices)
                 {
                     auto cand_subgraph = std::make_shared<Graph>();
-                    auto cand_map = std::make_shared<std::map<Vertex, Vertex>>();
+                    auto cand_map = std::make_shared<std::map<int, int>>();
 
                     // subgraph of current candidate
                     cand_subgraph->AddVertex(first_src_vertex);
 
                     // map for current candidate subgraph
-                    cand_map->at(first_sg_vertex) = first_src_vertex;
+                    cand_map->insert({first_sg_vertex.GetId(), first_src_vertex.GetId()});
 
                     // add candidate to stack
                     cand_subgraphs.push(std::make_pair(cand_subgraph, cand_map));
@@ -469,10 +469,10 @@ public:
                         }
 
                         auto new_cand_subgraph = std::make_shared<Graph>(*cand_subgraph);
-                        auto new_cand_map = std::make_shared<std::map<Vertex, Vertex>>(*cand_map);
+                        auto new_cand_map = std::make_shared<std::map<int, int>>(*cand_map);
 
                         new_cand_subgraph->AddVertex(src_vertex);
-                        new_cand_map->at(sg_vertex) = src_vertex;
+                        new_cand_map->insert({sg_vertex.GetId(), src_vertex.GetId()});
 
                         if (cand_subgraph_size + 1 == subgraph_size)
                         {
@@ -495,17 +495,22 @@ public:
                             {
                                 for (const auto &sg_vertex_to : *subgraph.GetVertices())
                                 {
-                                    if (sg_vertex_from == sg_vertex_to)
-                                    {
-                                        continue;
-                                    }
+                                    // if (sg_vertex_from == sg_vertex_to)
+                                    // {
+                                    //     continue;
+                                    // }
 
                                     // mapping vertex in candidate subgraph
-                                    auto src_vertex_from = new_cand_map->at(sg_vertex_from);
-                                    auto src_vertex_to = new_cand_map->at(sg_vertex_to);
+				    for (const auto &it : *new_cand_map) {
+					LOG(INFO) << "sg id: " << it.first << ", src id: " << it.second << std::endl;
+				    }
+				    LOG(INFO) << "# sg from id: " << sg_vertex_from.GetId() << std::endl;
+                                    auto src_vertex_from_id = new_cand_map->at(sg_vertex_from.GetId());
+				    LOG(INFO) << "# sg to id: " << sg_vertex_from.GetId() << std::endl;
+                                    auto src_vertex_to_id = new_cand_map->at(sg_vertex_to.GetId());
 
                                     auto sg_key = std::make_pair(sg_vertex_from.GetId(), sg_vertex_to.GetId());
-                                    auto src_key = std::make_pair(src_vertex_from.GetId(), src_vertex_to.GetId());
+                                    auto src_key = std::make_pair(src_vertex_from_id, src_vertex_to_id);
 
                                     auto it = src_edge_labels.find(src_key);
                                     if (it == src_edge_labels.end() || it->second != sg_edge_labels[sg_key])
