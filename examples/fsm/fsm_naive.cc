@@ -171,7 +171,7 @@ class FSMNaive : public Job
 public:
     void Run(TaskGraph *tg, const std::shared_ptr<Properties> &config) const override
     {
-        auto input = config->GetOrSet("graph", "dataset/test1.lg");
+        auto input = config->GetOrSet("graph", "/home/ckchang/software/ck-ursa/examples/dataset/test1.lg");
         int n_partitions = std::stoi(config->GetOrSet("parallelism", "1"));
         int minimal_support = std::stoi(config->GetOrSet("minimal_support", "5"));
         int n_iters = std::stoi(config->GetOrSet("n_iters", "5")); // the max number of edges in frequent subgraph.
@@ -512,3 +512,8 @@ public:
         axe::common::JobDriver::ReversePrintTaskGraph(*tg);
     }
 };
+
+int main(int argc, char** argv) {
+  axe::common::JobDriver::Run(argc, argv, FSMNaive());
+  return 0;
+}
