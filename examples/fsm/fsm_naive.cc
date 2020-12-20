@@ -16,6 +16,8 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
+#include <stack>
 
 #include "glog/logging.h"
 
@@ -34,7 +36,7 @@ public:
 
     int GetVId() const { return v_id_; }
     int GetEId() const { return e_id_; }
-    int GetELabel() const { return e_label_ }
+    int GetELabel() const { return e_label_; }
 
     bool operator<(const Neighbor &other) const { return e_id_ < other.e_id_; }
     bool operator==(const Neighbor &other) const { return e_id_ == other.e_id_; }
@@ -87,10 +89,11 @@ public:
     Graph() : vertices_(std::make_shared<std::vector<Vertex>>()) {}
     Graph(int id, int support,
           const std::shared_ptr<std::vector<Vertex>> &vertices) : id_(id), support_(support), vertices_(vertices) {}
-    Graph(const Graph& graph) {
+    Graph(const Graph &graph)
+    {
         this->id_ = graph.id_;
         this->support_ = graph.support_;
-        this->vertices_ = std::make_shared(std::vector<Vertex>(*graph.vertices));
+        this->vertices_ = std::make_shared<std::vector<Vertex>>(*graph.vertices_);
     }
 
     int GetId() const { return id_; }
@@ -99,6 +102,12 @@ public:
     void SetSupport(int support) { support_ = support; }
     const std::shared_ptr<std::vector<Vertex>> &GetVertices() const { return vertices_; }
     void AddVertex(const Vertex &vertex) { vertices_->push_back(vertex); }
+
+    bool operator<(const Graph &other) const { return id_ < other.id_; }
+    bool operator==(const Graph &other) const { return id_ == other.id_; }
+
+    friend void operator<<(axe::base::BinStream &bin_stream, const Graph &g) { bin_stream << g.id_ << g.support_ << *(g.vertices_); }
+    friend void operator>>(axe::base::BinStream &bin_stream, Graph &g) { bin_stream >> g.id_ >> g.support_ >> *(g.vertices_); }
 
 private:
     int id_;
@@ -208,15 +217,15 @@ public:
         // }));
 
         auto start_candidates_label = graph.MapPartition([](const DatasetPartition<Vertex> &data) {
-                                               DatasetPartition<std::pair<int, int>> ret;
+                                               DatasetPartition<std::pair<LabelType, int>> ret;
                                                for (const auto &v : data)
                                                    ret.push_back(std::make_pair(v.GetLabel(), 1));
                                                return ret;
                                            })
-                                          .ReduceBy([](const std::pair<int, int> v_c) { return v_c.first.GetLabel(); },
-                                                    [](std::pair<int, int> &agg, const std::pair<int, int> &update) { agg.second += update.second; })
-                                          .MapPartition([minimal_support](const DatasetPartition<std::pair<int, int>> &data) {
-                                              DatasetPartition<std::pair<int, int>> ret;
+                                          .ReduceBy([](const std::pair<LabelType, int> v_c) { return v_c.first; },
+                                                    [](std::pair<LabelType, int> &agg, const std::pair<LabelType, int> &update) { agg.second += update.second; })
+                                          .MapPartition([minimal_support](const DatasetPartition<std::pair<LabelType, int>> &data) {
+                                              DatasetPartition<std::pair<LabelType, int>> ret;
                                               for (const auto &label_count : data)
                                               {
                                                   if (label_count.second >= minimal_support)
@@ -226,7 +235,7 @@ public:
                                               }
                                               return ret;
                                           })
-                                          .PartitionBy([](const std::pair<int, int> &) { return 0; }, 1);
+                                          .PartitionBy([](const std::pair<LabelType, int> &) { return 0; }, 1);
 
         // auto start_vertices = start_candidates_label.MapPartition([](const DatasetPartition<std::pair<int, int>> data) {
         //     DatasetPartition<std::pair<Vertex, int>> ret;
@@ -290,7 +299,8 @@ public:
                 // For each candidate subgraph, try to get a lot of extended graph from it.
 
                 std::vector<int> sg_vids; // The vertex Id of all the vertices in the subgraph.
-                for (const auto &sg_vertex : *subgraph.GetVertices()){
+                for (const auto &sg_vertex : *subgraph.GetVertices())
+                {
                     sg_vids.push_back(sg_vertex.GetId());
                 }
 
@@ -323,17 +333,20 @@ public:
                                 (*new_graph.GetVertices()) = *subgraph.GetVertices(); // should be a deep copy.
 
                                 (*new_graph.GetVertices()).at(sg_v_i).AddNeighbor(src_neighbor); // Add the new edge to the new_subgraph.
-                                CHECK_EQ((*new_graph.GetVertices()).at(sg_v_i).GetNeighborCount() == *subgraph.GetVertices().at(sg_v_i).GetNeighborCount() + 1);
+                                CHECK_EQ((*new_graph.GetVertices()).at(sg_v_i).GetNeighborCount(), (*subgraph.GetVertices()).at(sg_v_i).GetNeighborCount() + 1);
 
                                 // If the neighbor vertex of this edge doesn't exist in the subgraph, add it.
                                 bool neigher_existed = false;
-                                for (size_t i=0; i<sg_vids.size(); i++){
-                                    if (sg_vids[i] == src_neighbor.GetVId()){
+                                for (size_t i = 0; i < sg_vids.size(); i++)
+                                {
+                                    if (sg_vids[i] == src_neighbor.GetVId())
+                                    {
                                         neigher_existed = true;
                                         break;
                                     }
                                 }
-                                if (!neigher_existed){
+                                if (!neigher_existed)
+                                {
                                     Vertex new_neighbor_vertex;
                                     new_neighbor_vertex.SetId(src_neighbor.GetVId());
                                     new_neighbor_vertex.SetLabel(src_vertices.at(src_neighbor.GetVId()).GetLabel());
@@ -342,7 +355,7 @@ public:
                                     new_graph.AddVertex(new_neighbor_vertex);
                                 }
 
-                                extended_subgraphs.push_back(new_graph)
+                                extended_subgraphs.push_back(new_graph);
                             }
                         }
                     }
@@ -358,52 +371,60 @@ public:
             // return: the candidate that support is over minimal_support.
             DatasetPartition<Graph> frequent_subgraphs;
             int src_support = src_graph.at(0).GetSupport();
-            for (const auto &subgraph : subgraphs) {
+            for (const auto &subgraph : subgraphs)
+            {
                 // Prepare
                 size_t subgraph_size = subgraph.GetVertices()->size();
                 // from/to id and edge in subgraph
-                std::map<std::tuple<int, int>, int> sg_edge_labels;
-                for (const auto &sg_vertex : *subgraph.GetVertices()) {
-                    for (const auto &sg_neighbor : *sg_vertex.GetNeighbors()) {
-                        auto key = std::make_tuple(sg_vertex.GetId(), sg_neighbor.GetVId());
+                std::map<std::pair<int, int>, int> sg_edge_labels;
+                for (const auto &sg_vertex : *subgraph.GetVertices())
+                {
+                    for (const auto &sg_neighbor : *sg_vertex.GetNeighbors())
+                    {
+                        auto key = std::make_pair(sg_vertex.GetId(), sg_neighbor.GetVId());
                         sg_edge_labels[key] = sg_neighbor.GetELabel();
                     }
                 }
 
                 // Find all possible mapping vertices in big graph
                 std::map<Vertex, std::vector<Vertex>> vertices_mapping;
-                for (const auto &sg_vertex : *subgraph.GetVertices()) {
-                    for (const auto &src_vertex: *src_graph.at(0).GetVertices()) {
+                for (const auto &sg_vertex : *subgraph.GetVertices())
+                {
+                    for (const auto &src_vertex : *src_graph.at(0).GetVertices())
+                    {
                         // If they have same vertex label, they can be mapped
-                        if (sg_vertex.GetLabel() == src_vertex.GetLabel()) {
+                        if (sg_vertex.GetLabel() == src_vertex.GetLabel())
+                        {
                             vertices_mapping[sg_vertex].push_back(src_vertex);
                         }
                     }
                 }
                 // Turn map to vector for sequential access
                 // TODO(Chenxia): remove raw pointer
-                std::vector<std::tuple<Vertex, std::vector<Vertex>*>>
-                    vertices_mapping_vec;
-                for (const auto &vertex_mapping : vertices_mapping) {
-                    vertices_mapping_vec.append(std::make_tuple(
-                        vertex_mapping.first, &vertex_mapping.second));
+                std::vector<std::pair<Vertex, std::vector<Vertex>* >> vertices_mapping_vec;
+                for (auto &vertex_mapping : vertices_mapping)
+                {
+                    vertices_mapping_vec.push_back(
+                        std::make_pair(vertex_mapping.first, &(vertex_mapping.second)));
                 }
                 // Check if number of all possible subgraphs not less than support
                 long long cand_subgraphs_num = 1;
-                for (const auto &vertex_mapping : vertices_mapping) {
-                    cand_subgraphs_num *= vertex_mapping.second->size();
+                for (const auto &vertex_mapping : vertices_mapping)
+                {
+                    cand_subgraphs_num *= vertex_mapping.second.size();
                 }
                 // TODO(Chenxia): potential bug when it's beyond the range of int
-                if (cand_subgraphs_num < src_support) {
+                if (cand_subgraphs_num < src_support)
+                {
                     return frequent_subgraphs;
                 }
                 // Enumerate all possible graphs and its mapping
-                std::stack<std::tuple<shared_ptr<Graph>,
-                    shared_ptr<std::map<Vertex, Vertex>>>> cand_subgraphs;
+                std::stack<std::pair<std::shared_ptr<Graph>, std::shared_ptr<std::map<Vertex, Vertex>>>> cand_subgraphs;
                 // Add first possible vertices to stack
                 auto first_sg_vertex = vertices_mapping_vec.at(0).first;
                 auto first_src_vertices = vertices_mapping_vec.at(0).second;
-                for (const auto &first_src_vertex : *first_src_vertices) {
+                for (const auto &first_src_vertex : *first_src_vertices)
+                {
                     auto cand_subgraph = std::make_shared<Graph>();
                     auto cand_map = std::make_shared<std::map<Vertex, Vertex>>();
 
@@ -414,53 +435,68 @@ public:
                     cand_map->at(first_sg_vertex) = first_src_vertex;
 
                     // add candidate to stack
-                    cand_subgraphs.push(std::make_tuple(cand_subgraph, cand_map));
+                    cand_subgraphs.push(std::make_pair(cand_subgraph, cand_map));
                 }
                 // Enumerate next possible subgraphs
-                while (!cand_subgraphs.empty()) {
-                    auto [ cand_subgraph, cand_map ] = cand_subgraphs.pop();
-                    cand_subgraph_size = cand_subgraph->GetVertices()->size();
+                while (!cand_subgraphs.empty())
+                {
+                    auto tmp_cand = cand_subgraphs.top();
+                    cand_subgraphs.pop();
+                    auto cand_subgraph = tmp_cand.first;
+                    auto cand_map = tmp_cand.second;
+                    // auto [cand_subgraph, cand_map] = cand_subgraphs.pop();
+                    auto cand_subgraph_size = cand_subgraph->GetVertices()->size();
 
                     auto sg_vertex = vertices_mapping_vec.at(cand_subgraph_size).first;
                     auto src_vertices = vertices_mapping_vec.at(cand_subgraph_size).second;
-                    for (const auto &src_vertex : *src_vertices) {
+                    for (const auto &src_vertex : *src_vertices)
+                    {
                         // check whether the vertex is already in the candidate subgraph
                         bool duplicate_vertex = false;
                         std::set<int> cand_vid_set;
-                        for (const auto &cand_vertex : *cand_subgraph->GetVertices()) {
+                        for (const auto &cand_vertex : *cand_subgraph->GetVertices())
+                        {
                             cand_vid_set.insert(cand_vertex.GetId());
-                            if (src_vertex == cand_vertex) {
+                            if (src_vertex == cand_vertex)
+                            {
                                 duplicate_vertex = true;
                                 break;
                             }
                         }
-                        if (duplicate_vertex) {
+                        if (duplicate_vertex)
+                        {
                             continue;
                         }
 
-                        auto new_cand_subgraph = std::make_shared<Graph(*cand_subgraph));
+                        auto new_cand_subgraph = std::make_shared<Graph>(*cand_subgraph);
                         auto new_cand_map = std::make_shared<std::map<Vertex, Vertex>>(*cand_map);
 
-                        new_cand_subgraph.AddVertex(src_vertex);
+                        new_cand_subgraph->AddVertex(src_vertex);
                         new_cand_map->at(sg_vertex) = src_vertex;
 
-                        if (cand_subgraph_size+1 == subgraph_size) {
+                        if (cand_subgraph_size + 1 == subgraph_size)
+                        {
                             // check if every pair of vertices have same edges and labels
                             bool isomorphism = true;
 
                             // from/to id and edge in candidate subgraph
-                            std::map<std::tuple<int, int>, int> src_edge_labels;
-                            for (const auto &src_vertex : *new_cand_subgraph->GetVertices()) {
-                                for (const auto &src_neighbor : *src_vertex.GetNeighbors()) {
-                                    auto key = std::make_tuple(src_vertex.GetId(), src_neighbor.GetVId());
+                            std::map<std::pair<int, int>, int> src_edge_labels;
+                            for (const auto &src_vertex : *new_cand_subgraph->GetVertices())
+                            {
+                                for (const auto &src_neighbor : *src_vertex.GetNeighbors())
+                                {
+                                    auto key = std::make_pair(src_vertex.GetId(), src_neighbor.GetVId());
                                     src_edge_labels[key] = src_neighbor.GetELabel();
                                 }
                             }
 
                             // enumerate all pairs of vertices in subgraph
-                            for (const auto &sg_vertex_from : *subgraph.GetVertices()) {
-                                for (const auto &sg_vertex_to : *subgraph.GetVertices()) {
-                                    if (sg_vertex_from == sg_vertex_to) {
+                            for (const auto &sg_vertex_from : *subgraph.GetVertices())
+                            {
+                                for (const auto &sg_vertex_to : *subgraph.GetVertices())
+                                {
+                                    if (sg_vertex_from == sg_vertex_to)
+                                    {
                                         continue;
                                     }
 
@@ -468,21 +504,26 @@ public:
                                     auto src_vertex_from = new_cand_map->at(sg_vertex_from);
                                     auto src_vertex_to = new_cand_map->at(sg_vertex_to);
 
-                                    auto sg_key = std::make_tuple(sg_vertex_from.GetId(), sg_vertex_to.GetId());
-                                    auto src_key = std::make_tuple(src_vertex_from.GetId(), src_vertex_to.GetId());
+                                    auto sg_key = std::make_pair(sg_vertex_from.GetId(), sg_vertex_to.GetId());
+                                    auto src_key = std::make_pair(src_vertex_from.GetId(), src_vertex_to.GetId());
 
                                     auto it = src_edge_labels.find(src_key);
-                                    if (it == src_edge_labels.end() || it->second() != sg_edge_labels[sg_key]) {
+                                    if (it == src_edge_labels.end() || it->second != sg_edge_labels[sg_key])
+                                    {
                                         isomorphism = false;
                                     }
                                 }
                             }
 
-                            if (isomorphism) {
-                                frequent_subgraphs.AppendPartition(*new_cand_subgraph);
+                            if (isomorphism)
+                            {
+                                
+                                frequent_subgraphs.push_back(*new_cand_subgraph);
                             }
-                        } else {
-                            cand_subgraphs.push(std::make_tuple(new_cand_subgraph, new_cand_map));
+                        }
+                        else
+                        {
+                            cand_subgraphs.push(std::make_pair(new_cand_subgraph, new_cand_map));
                         }
                     }
                 }
@@ -490,7 +531,10 @@ public:
             return frequent_subgraphs;
         };
         auto update_results = [](DatasetPartition<Graph> &results, const DatasetPartition<Graph> &new_candidate) {
-            results.AppendPartition(new_candidate);
+            // results.AppendPartition(new_candidate);
+            for(const auto &candidate : new_candidate){
+                results.push_back(candidate);
+            }
         };
 
         // main loop
@@ -513,7 +557,8 @@ public:
     }
 };
 
-int main(int argc, char** argv) {
-  axe::common::JobDriver::Run(argc, argv, FSMNaive());
-  return 0;
+int main(int argc, char **argv)
+{
+    axe::common::JobDriver::Run(argc, argv, FSMNaive());
+    return 0;
 }
