@@ -500,7 +500,7 @@ public:
                 ret.push_back(Graph(0, last_edge_frequency, vertices));
                 return ret;
             });
-            
+
             auto subgraphs = std::make_shared<GraphDataset>(frequent_edge_as_graph);
 
             auto step_results = frequent_edge_as_graph; // deep copy here.
@@ -511,14 +511,13 @@ public:
             for (int i = 0; i < n_iters; i++)
             {
                 subgraphs = std::make_shared<GraphDataset>(
-                    (*subgraphs).MapPartitionWith(&frequent_edges, extend_with_freq_edge)
-                    .MapPartitionWith(&src_graph, frequent_subgraph_isomorphism));
+                    (*subgraphs).MapPartitionWith(&frequent_edges, extend_with_freq_edge).MapPartitionWith(&src_graph, frequent_subgraph_isomorphism));
                 step_results.UpdatePartitionWith(subgraphs.get(), update_results);
             }
             results.UpdatePartitionWith(step_results, update_results);
 
-            src_graph.UpdatePartitionWith(frequent_edges, [](GraphPartition data,DatasetPartition<EdgeSupportPair> &freq_edges){
-                // do nothing. 
+            src_graph.UpdatePartitionWith(frequent_edges, [](GraphPartition data, DatasetPartition<EdgeSupportPair> &freq_edges) {
+                // do nothing.
                 // [TODO] Which edge to remove, as there will be a lot of edge in G with same pattern.
                 // Or I misunderstood the Grami? The freq_edges also contains the vertex id?
             }); // remove edge;
@@ -526,184 +525,6 @@ public:
             frequent_edges.UpdatePartition([](DatasetPartition<EdgeSupportPair> &data){
                 data.pop_back(); // We pop_back to avoid updating the identify of the edge.
             }));
-        }
-
-        auto shared_graph = std::make_shared<axe::common::Dataset<Vertex>>(graph);
-
-        auto graphs = graph.MapPartition([](const DatasetPartition<Vertex> &data) {
-            DatasetPartition<Graph> ret;
-            auto vertices = std::make_shared<std::vector<Vertex>>();
-            for (auto &v : data)
-                vertices->push_back(v);
-            ret.push_back(Graph(0, 1, vertices));
-            return ret;
-        });
-        auto shared_graphs = std::make_shared<axe::common::Dataset<Graph>>(graphs); // The big single graph G , with id=0, and support=1.
-
-        auto start_candidates_label = graph.MapPartition([](const DatasetPartition<Vertex> &data) {
-                                               DatasetPartition<std::pair<LabelType, int>> ret;
-                                               for (const auto &v : data)
-                                                   ret.push_back(std::make_pair(v.GetLabel(), 1));
-                                               return ret;
-                                           })
-                                          .ReduceBy([](const std::pair<LabelType, int> v_c) { return v_c.first.GetLabel(); },
-                                                    [](std::pair<LabelType, int> &agg, const std::pair<LabelType, int> &update) { agg.second += update.second; })
-                                          .MapPartition([minimal_support](const DatasetPartition<std::pair<LabelType, int>> &data) {
-                                              DatasetPartition<std::pair<LabelType, int>> ret;
-                                              for (const auto &label_count : data)
-                                              {
-                                                  if (label_count.second >= minimal_support)
-                                                  {
-                                                      ret.push_back(label_count);
-                                                  }
-                                              }
-                                              return ret;
-                                          }); // currently each paration will have a set of frequent_vertex_labels with their support.
-                                              //   .PartitionBy([](const std::pair<LabelType, int> &) { return 0; }, 1); // aggregate the partitions to on partition.
-
-        auto get_graphs_with_vertex_label = [](const DatasetPartition<Vertex> &src_graph, const DatasetPartition<std::pair<LabelType, int>> &labels) {
-            DatasetPartition<Graph> ret;
-            for (const auto &v : src_graph)
-            {
-                for (const auto &label : labels)
-                {
-                    if (label.first == v.GetLabel())
-                    {
-                        Vertex new_vertex;
-                        new_vertex.SetId(v.GetId());
-                        new_vertex.SetLabel(v.GetLabel());
-
-                        auto vertices = std::make_shared<std::vector<Vertex>>();
-                        vertices->push_back(new_vertex);
-                        ret.push_back(Graph(0, label.second, vertices));
-                        break;
-                    }
-                }
-            }
-            return ret;
-        };
-
-        auto all_candidates_labels = start_candidates_label.Broadcast([](const std::pair<LabelType, int> &c) { return c.first; }, n_partitions);
-        auto start_candidates = graph.SharedDataMapPartitionWith(&all_candidates_labels, get_graphs_with_vertex_label);
-        auto results = start_candidates; // should be a deep copy
-
-        auto extend_subgraph = [](const DatasetPartition<Graph> &subgraphs, const DatasetPartition<Graph> &src_graph) {
-            DatasetPartition<Graph> extended_subgraphs;
-            auto src_vertices = *src_graph.at(0).GetVertices();
-            for (const auto &subgraph : subgraphs)
-            {
-                // For each candidate subgraph, try to get a lot of extended graph from it.
-
-                std::vector<int> sg_vids; // The vertex Id of all the vertices in the subgraph.
-                for (const auto &sg_vertex : *subgraph.GetVertices())
-                {
-                    sg_vids.push_back(sg_vertex.GetId());
-                }
-
-                int sg_v_i = 0;
-                for (const auto &sg_vertex : *subgraph.GetVertices())
-                {
-                    // We extend a subgraph based on its vertex by adding edge on vertex.
-                    // If the vertex in subgraph doesn't exist in src_graph, then we do not extend.
-                    int src_graph_ptr = 0;
-                    for (size_t src_graph_ptr = 0; src_graph_ptr < src_vertices.size(); ++src_graph_ptr)
-                    {
-                        if (src_vertices[src_graph_ptr].GetId() == sg_vertex.GetId())
-                        {
-                            break;
-                        }
-                    }
-                    if (src_graph_ptr >= src_vertices.size())
-                    {
-                        continue;
-                    }
-                    const auto &src_vertex = src_vertices.at(src_graph_ptr); // Find sg_vertex.GetId() in src_vertices;
-
-                    if (sg_vertex.GetNeighborCount() < src_vertex.GetNeighborCount())
-                    {
-                        // If the neighbour count of the subgraph-vertex is less than src vertex,
-                        // that means we can extend a edge on subgraph-vertex, and then get a new candidate.
-                        for (const auto &src_neighbor : *src_vertex.GetNeighbors())
-                        {
-                            bool edge_existed = false;
-                            // If the edge in src_vertex is existing in subgraph, then we go on to next edge.
-                            for (const auto &sg_neighbor : *sg_vertex.GetNeighbors())
-                            {
-                                if (sg_neighbor.GetELabel() == src_neighbor.GetELabel() && sg_neighbor.GetVId() == src_neighbor.GetVId())
-                                {
-                                    edge_existed = true;
-                                    break;
-                                }
-                            }
-                            if (!edge_existed)
-                            {
-                                // We can add this edge in src_vertex to subgraph.
-                                auto new_sg_vertices = std::make_shared<std::vector<Vertex>>();
-                                Graph new_graph(0, 1, new_sg_vertices);
-                                (*new_graph.GetVertices()) = *subgraph.GetVertices(); // should be a deep copy.
-
-                                (*new_graph.GetVertices()).at(sg_v_i).AddNeighbor(src_neighbor); // Add the new edge to the new_subgraph.
-                                CHECK_EQ((*new_graph.GetVertices()).at(sg_v_i).GetNeighborCount() == *subgraph.GetVertices().at(sg_v_i).GetNeighborCount() + 1);
-
-                                // Check whether the neighbor vertex existing in src_graph.
-                                int src_graph_ptr = 0;
-                                for (size_t src_graph_ptr = 0; src_graph_ptr < src_vertices.size(); ++src_graph_ptr)
-                                {
-                                    if (src_vertices[src_graph_ptr].GetId() == src_neighbor.GetVId())
-                                    {
-                                        break;
-                                    }
-                                }
-                                if (src_graph_ptr < src_vertices.size()) // the neighbor vertex existing in src_graph.
-                                {
-                                    // If the neighbor vertex of this edge doesn't exist in the subgraph, add it.
-                                    bool neigher_existed_in_sg = false;
-                                    for (size_t i = 0; i < sg_vids.size(); i++)
-                                    {
-                                        if (sg_vids[i] == src_neighbor.GetVId())
-                                        {
-                                            neigher_existed_in_sg = true;
-                                            break;
-                                        }
-                                    }
-                                    if (!neigher_existed_in_sg)
-                                    {
-                                        Vertex new_neighbor_vertex;
-                                        new_neighbor_vertex.SetId(src_neighbor.GetVId());
-                                        new_neighbor_vertex.SetLabel(src_vertices.at(src_neighbor.GetVId()).GetLabel()); // Find src_neighbor.GetVId() in src_vertices;
-                                        new_neighbor_vertex.AddNeighbor(Neighbor(src_neighbor.GetEId(), sg_v_i, src_neighbor.GetELabel()));
-
-                                        new_graph.AddVertex(new_neighbor_vertex);
-                                    }
-                                }
-                                // Add the new extended graph into extended_subgraphs, as outputs.
-                                extended_subgraphs.push_back(new_graph)
-                            }
-                        }
-                    }
-                    sg_v_i++;
-                }
-            }
-            return extended_subgraphs;
-        };
-        auto frequent_subgraph_isomorphism = [](const DatasetPartition<Graph> &subgraphs, const DatasetPartition<Graph> &src_graph) {
-            // subgraph: a lot of candidate subgraphs
-            // src_graph: the original big graph
-            // progress: iterate over each subgraph, calculate its support in src_graph
-            // return: the candidate that support is over minimal_support.
-            DatasetPartition<Graph> frequent_subgraphs;
-            return frequent_subgraphs;
-        };
-        auto update_results = [](DatasetPartition<Graph> &results, const DatasetPartition<Graph> &new_candidate) {
-            results.AppendPartition(new_candidate);
-        };
-
-        // main loop
-        auto candidates = start_candidates;
-        for (size_t i = 0; i < n_iters; i++)
-        {
-            candidates = candidates.MapPartitionWith(shared_graphs.get(), extend_subgraph).MapPartitionWith(shared_graphs.get(), frequent_subgraph_isomorphism);
-            results.UpdatePartitionWith(&candidates, update_results);
         }
 
         results.ApplyRead([](const DatasetPartition<Graph> &data) {
