@@ -346,7 +346,7 @@ class FSMNaive : public Job {
       // subgraph: a lot of candidate subgraphs
       // src_graph: the original big graph
       // progress: iterate over each subgraph, calculate its support in src_graph
-      // return: the candidate that support is over minimal_support.
+      // return: the candidate subgraphs that support is over minimal_support.
       DatasetPartition<Graph> frequent_subgraphs;
       for (const auto& subgraph : subgraphs) {
         // Prepare
