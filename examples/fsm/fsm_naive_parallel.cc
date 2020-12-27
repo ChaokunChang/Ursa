@@ -67,13 +67,14 @@ public:
     int GetLabel() const { return label_; }
     const std::shared_ptr<std::vector<Neighbor>> &GetNeighbors() const { return neighbors_; }
     int GetNeighborCount() const { return neighbors_->size(); }
-    std::string GetStr(bool verbose=false) const
+    std::string GetStr(bool verbose = false) const
     {
         std::string ret = "[v, " + std::to_string(id_) + "," + std::to_string(label_);
         int neighbor_count = 0;
         for (const auto &neighbor : *neighbors_)
         {
-            if (!verbose && neighbor_count >= 5){
+            if (!verbose && neighbor_count >= 5)
+            {
                 ret += "...... (" + neighbors_->size() + "neighbors in total)";
                 break;
             }
@@ -119,14 +120,15 @@ public:
 
     int GetId() const { return id_; }
     int GetSupport() const { return support_; }
-    std::string GetStr(bool verbose=false) const
+    std::string GetStr(bool verbose = false) const
     {
         std::string ret = "\n {g, " + std::to_string(id_) + "," + std::to_string(support_);
         int vertex_count = 0;
         for (const auto &vertex : *vertices_)
         {
             ret += "\n ********";
-            if (!verbose && vertex_count >= 10){
+            if (!verbose && vertex_count >= 10)
+            {
                 ret += "...... (" + vertices_->size() + "vertices in total)";
                 break;
             }
@@ -280,7 +282,7 @@ public:
                     return ret;
                 })
                 .PartitionBy([](const LabelSupportPair &) { return 0; }, n_partitions);
-        
+
         frequent_vertex_labels.ApplyRead([](const DatasetPartition<LabelSupportPair> &data) {
             LOG(INFO) << "Read Frequent V labels in this Partition: " << data.size();
             for (const auto &p : data)
@@ -402,6 +404,7 @@ public:
             }
             return extended_subgraphs;
         };
+
         auto frequent_subgraph_isomorphism = [minimal_support](const DatasetPartition<Graph> &src_graph, const DatasetPartition<Graph> &subgraphs) {
             // subgraph: a lot of candidate subgraphs
             // src_graph: the original big graph
@@ -410,7 +413,197 @@ public:
             DatasetPartition<Graph> frequent_subgraphs;
             for (const auto &subgraph : subgraphs)
             {
-                frequent_subgraphs.push_back(subgraph);
+                // Prepare
+                size_t subgraph_size = subgraph.GetVertices()->size();
+                // from/to id and edge in subgraph
+                std::map<std::pair<int, int>, int> sg_edge_labels;
+                for (const auto &sg_vertex : *subgraph.GetVertices())
+                {
+                    for (const auto &sg_neighbor : *sg_vertex.GetNeighbors())
+                    {
+                        auto key = std::make_pair(sg_vertex.GetId(), sg_neighbor.GetVId());
+                        sg_edge_labels[key] = sg_neighbor.GetELabel();
+                    }
+                }
+
+                // Find all possible mapping vertices in big graph
+                std::map<Vertex, std::vector<Vertex>> vertices_mapping;
+                for (const auto &sg_vertex : *subgraph.GetVertices())
+                {
+                    for (const auto &src_vertex : *src_graph.at(0).GetVertices())
+                    {
+                        // If they have same vertex label, they can be mapped
+                        if (sg_vertex.GetLabel() == src_vertex.GetLabel())
+                        {
+                            vertices_mapping[sg_vertex].push_back(src_vertex);
+                        }
+                    }
+                }
+                // Turn map to vector for sequential access
+                // TODO(Chenxia): remove raw pointer
+                std::vector<std::pair<Vertex, std::vector<Vertex> *>> vertices_mapping_vec;
+                for (auto &vertex_mapping : vertices_mapping)
+                {
+                    vertices_mapping_vec.push_back(std::make_pair(vertex_mapping.first, &(vertex_mapping.second)));
+                }
+                // Check if number of all possible subgraphs not less than support
+                long long cand_subgraphs_num = 1;
+                for (const auto &vertex_mapping : vertices_mapping)
+                {
+                    cand_subgraphs_num *= vertex_mapping.second.size();
+                }
+                // TODO(Chenxia): potential bug when it's beyond the range of int
+                if (cand_subgraphs_num < minimal_support)
+                {
+                    continue;
+                }
+                // Enumerate all possible graphs and its mapping
+                std::stack<std::pair<std::shared_ptr<Graph>, std::shared_ptr<std::map<int, int>>>> cand_subgraphs;
+                // Add first possible vertices to stack
+                auto first_sg_vertex = vertices_mapping_vec.at(0).first;
+                auto first_src_vertices = vertices_mapping_vec.at(0).second;
+                for (const auto &first_src_vertex : *first_src_vertices)
+                {
+                    auto cand_subgraph = std::make_shared<Graph>();
+                    auto cand_map = std::make_shared<std::map<int, int>>();
+
+                    // subgraph of current candidate
+                    cand_subgraph->AddVertex(first_src_vertex);
+
+                    // map for current candidate subgraph
+                    cand_map->insert({first_sg_vertex.GetId(), first_src_vertex.GetId()});
+
+                    // add candidate to stack
+                    cand_subgraphs.push(std::make_pair(cand_subgraph, cand_map));
+                }
+                // number of isomorphism subgraphs in big graph
+                size_t num_isomorphism = 0;
+                // record vertex ids of subgraphs in big graph to avoid duplicate matching
+                std::set<std::vector<int>> fingerprint;
+                // Enumerate next possible subgraphs, early stop if found enough isomorphism subgraphs
+                while (!cand_subgraphs.empty() && num_isomorphism < minimal_support)
+                {
+                    auto tmp_cand = cand_subgraphs.top();
+                    cand_subgraphs.pop();
+                    auto cand_subgraph = tmp_cand.first;
+                    auto cand_map = tmp_cand.second;
+                    // auto [cand_subgraph, cand_map] = cand_subgraphs.pop();
+                    auto cand_subgraph_size = cand_subgraph->GetVertices()->size();
+
+                    auto sg_vertex = vertices_mapping_vec.at(cand_subgraph_size).first;
+                    auto src_vertices = vertices_mapping_vec.at(cand_subgraph_size).second;
+                    for (const auto &src_vertex : *src_vertices)
+                    {
+                        // check whether the vertex is already in the candidate subgraph
+                        bool duplicate_vertex = false;
+                        for (const auto &cand_vertex : *cand_subgraph->GetVertices())
+                        {
+                            if (src_vertex == cand_vertex)
+                            {
+                                duplicate_vertex = true;
+                                break;
+                            }
+                        }
+                        if (duplicate_vertex)
+                        {
+                            continue;
+                        }
+
+                        auto new_cand_subgraph = std::make_shared<Graph>(*cand_subgraph);
+                        auto new_cand_map = std::make_shared<std::map<int, int>>(*cand_map);
+
+                        new_cand_subgraph->AddVertex(src_vertex);
+                        new_cand_map->insert({sg_vertex.GetId(), src_vertex.GetId()});
+
+                        if (cand_subgraph_size + 1 == subgraph_size)
+                        {
+                            // check whether it's same as previous one
+                            std::vector<int> fp;
+                            for (const auto &vertex : *new_cand_subgraph->GetVertices())
+                            {
+                                fp.push_back(vertex.GetId());
+                            }
+                            std::sort(fp.begin(), fp.end());
+                            auto it = fingerprint.find(fp);
+                            if (it == fingerprint.end())
+                            {
+                                fingerprint.insert(fp);
+                            }
+                            else
+                            {
+                                continue;
+                            }
+
+                            // check if every pair of vertices have same edges and labels
+                            bool isomorphism = true;
+
+                            CHECK_EQ(subgraph_size, new_cand_map->size()) << "subgraph size: " << subgraph_size << " new cand map: " << new_cand_map->size();
+
+                            // from/to id and edge in candidate subgraph
+                            std::map<std::pair<int, int>, int> src_edge_labels;
+                            for (const auto &src_vertex : *new_cand_subgraph->GetVertices())
+                            {
+                                for (const auto &src_neighbor : *src_vertex.GetNeighbors())
+                                {
+                                    auto key = std::make_pair(src_vertex.GetId(), src_neighbor.GetVId());
+                                    src_edge_labels[key] = src_neighbor.GetELabel();
+                                }
+                            }
+
+                            // enumerate all pairs of vertices in subgraph
+                            for (const auto &sg_vertex_from : *subgraph.GetVertices())
+                            {
+                                for (const auto &sg_vertex_to : *subgraph.GetVertices())
+                                {
+                                    if (sg_vertex_from == sg_vertex_to)
+                                    {
+                                        continue;
+                                    }
+
+                                    //   mapping vertex in candidate subgraph
+                                    // for (const auto &it : *new_cand_map)
+                                    // {
+                                    //     LOG(INFO) << "sg id: " << it.first << ", src id: " << it.second << std::endl;
+                                    // }
+                                    // LOG(INFO) << "# sg from id: " << sg_vertex_from.GetId() << std::endl;
+                                    auto src_vertex_from_id = new_cand_map->at(sg_vertex_from.GetId());
+                                    // LOG(INFO) << "# sg to id: " << sg_vertex_to.GetId() << std::endl;
+                                    auto src_vertex_to_id = new_cand_map->at(sg_vertex_to.GetId());
+
+                                    auto sg_key = std::make_pair(sg_vertex_from.GetId(), sg_vertex_to.GetId());
+                                    auto src_key = std::make_pair(src_vertex_from_id, src_vertex_to_id);
+
+                                    auto it = src_edge_labels.find(src_key);
+                                    if (it == src_edge_labels.end() || it->second != sg_edge_labels[sg_key])
+                                    {
+                                        isomorphism = false;
+                                    }
+                                    break;
+                                }
+                            }
+
+                            if (isomorphism)
+                            {
+                                num_isomorphism++;
+                                // early stop
+                                if (num_isomorphism >= minimal_support)
+                                {
+                                    break;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            cand_subgraphs.push(std::make_pair(new_cand_subgraph, new_cand_map));
+                        }
+                    }
+                }
+                // return if is frequent isomorphism
+                if (num_isomorphism >= minimal_support)
+                {
+                    // subgraph.SetSupport(num_isomorphism);
+                    frequent_subgraphs.push_back(subgraph);
+                }
             }
             return frequent_subgraphs;
         };
@@ -453,7 +646,8 @@ public:
             .ApplyRead([iter](const DatasetPartition<Graph> &data) {
                 for (const auto &graph : data)
                 {
-                    LOG(INFO) << "final frequent subgraphs " << " : " << graph.GetStr();
+                    LOG(INFO) << "final frequent subgraphs "
+                              << " : " << graph.GetStr();
                 }
                 google::FlushLogFiles(google::INFO);
             });

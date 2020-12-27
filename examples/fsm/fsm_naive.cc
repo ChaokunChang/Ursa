@@ -474,12 +474,12 @@ class FSMNaive : public Job {
                   }
 
                   //   mapping vertex in candidate subgraph
-                  for (const auto &it : *new_cand_map) {
-                      LOG(INFO) << "sg id: " << it.first << ", src id: " << it.second << std::endl;
-                  }
-                  LOG(INFO) << "# sg from id: " << sg_vertex_from.GetId() << std::endl;
+                  // for (const auto &it : *new_cand_map) {
+                  //     LOG(INFO) << "sg id: " << it.first << ", src id: " << it.second << std::endl;
+                  // }
+                  // LOG(INFO) << "# sg from id: " << sg_vertex_from.GetId() << std::endl;
                   auto src_vertex_from_id = new_cand_map->at(sg_vertex_from.GetId());
-                  LOG(INFO) << "# sg to id: " << sg_vertex_to.GetId() << std::endl;
+                  // LOG(INFO) << "# sg to id: " << sg_vertex_to.GetId() << std::endl;
                   auto src_vertex_to_id = new_cand_map->at(sg_vertex_to.GetId());
 
                   auto sg_key = std::make_pair(sg_vertex_from.GetId(), sg_vertex_to.GetId());
