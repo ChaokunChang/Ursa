@@ -383,7 +383,7 @@ class FSMNaive : public Job {
         }
         // TODO(Chenxia): potential bug when it's beyond the range of int
         if (cand_subgraphs_num < minimal_support) {
-          return frequent_subgraphs;
+          continue;
         }
         // Enumerate all possible graphs and its mapping
         std::stack<std::pair<std::shared_ptr<Graph>, std::shared_ptr<std::map<int, int>>>> cand_subgraphs;
@@ -403,8 +403,12 @@ class FSMNaive : public Job {
           // add candidate to stack
           cand_subgraphs.push(std::make_pair(cand_subgraph, cand_map));
         }
-        // Enumerate next possible subgraphs
-        while (!cand_subgraphs.empty()) {
+        // number of isomorphism subgraphs in big graph
+        size_t num_isomorphism = 0;
+        // record vertex ids of subgraphs in big graph to avoid duplicate matching
+        std::set<std::vector<int>> fingerprint;
+        // Enumerate next possible subgraphs, early stop if found enough isomorphism subgraphs
+        while (!cand_subgraphs.empty() && num_isomorphism < minimal_support) {
           auto tmp_cand = cand_subgraphs.top();
           cand_subgraphs.pop();
           auto cand_subgraph = tmp_cand.first;
@@ -434,6 +438,19 @@ class FSMNaive : public Job {
             new_cand_map->insert({sg_vertex.GetId(), src_vertex.GetId()});
 
             if (cand_subgraph_size + 1 == subgraph_size) {
+              // check whether it's same as previous one
+              std::vector<int> fp;
+              for (const auto& vertex : *new_cand_subgraph->GetVertices()) {
+                  fp.push_back(vertex.GetId());
+              }
+              std::sort(fp.begin(), fp.end());
+              auto it = fingerprint.find(fp);
+              if (it == fingerprint.end()) {
+                fingerprint.insert(fp);
+              } else {
+                continue;
+              }
+
               // check if every pair of vertices have same edges and labels
               bool isomorphism = true;
 
@@ -456,7 +473,7 @@ class FSMNaive : public Job {
                       continue;
                   }
 
-                //   mapping vertex in candidate subgraph
+                  //   mapping vertex in candidate subgraph
                   for (const auto &it : *new_cand_map) {
                       LOG(INFO) << "sg id: " << it.first << ", src id: " << it.second << std::endl;
                   }
@@ -473,23 +490,31 @@ class FSMNaive : public Job {
                   {
                       isomorphism = false;
                   }
-                  isomorphism = false;
                   break;
                 }
               }
 
               if (isomorphism) {
-                frequent_subgraphs.push_back(*new_cand_subgraph);
+                num_isomorphism++;
+                // early stop
+                if (num_isomorphism >= minimal_support) {
+                  break;
+                }
               }
             } else {
               cand_subgraphs.push(std::make_pair(new_cand_subgraph, new_cand_map));
             }
           }
         }
+        // return if is frequent isomorphism
+        if (num_isomorphism >= minimal_support) {
+          // subgraph.SetSupport(num_isomorphism);
+          frequent_subgraphs.push_back(subgraph);
+        }
       }
-      //   for (const auto& subgraph : subgraphs) {
-      //     frequent_subgraphs.push_back(subgraph);
-      //   }
+      // for (const auto& subgraph : subgraphs) {
+      //   frequent_subgraphs.push_back(subgraph);
+      // }
       return frequent_subgraphs;
     };
 
