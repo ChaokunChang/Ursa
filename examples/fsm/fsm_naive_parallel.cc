@@ -222,16 +222,6 @@ class FSMNaiveParallel : public Job {
 
     auto shared_graph = std::make_shared<axe::common::Dataset<Vertex>>(graph);
 
-    // auto graphs = graph.MapPartition([](const DatasetPartition<Vertex>& data) {
-    //   DatasetPartition<Graph> ret;
-    //   auto vertices = std::make_shared<std::vector<Vertex>>();
-    //   for (auto& v : data)
-    //     vertices->push_back(v);
-    //   ret.push_back(Graph(0, 1, vertices));
-    //   return ret;
-    // });
-    // auto shared_graphs = std::make_shared<axe::common::Dataset<Graph>>(graphs);  // The big single graph G , with id=0, and support=1.
-
     (*shared_graph).ApplyRead([](const DatasetPartition<Vertex>& src_graph) {
       for (const auto& vertex : src_graph) {
         LOG(INFO) << "the shared graph: " << vertex.GetStr();
@@ -239,7 +229,7 @@ class FSMNaiveParallel : public Job {
       google::FlushLogFiles(google::INFO);
     });
 
-    auto frequent_vertex_labels = graph
+    auto frequent_vertex_labels = (*shared_graph)
                                       .MapPartition([](const DatasetPartition<Vertex>& data) {
                                         DatasetPartition<LabelSupportPair> ret;
                                         for (const auto& v : data)
@@ -259,13 +249,16 @@ class FSMNaiveParallel : public Job {
                                       })
                                       .PartitionBy([](const LabelSupportPair& p) { return p.first; }, n_partitions);
 
-    frequent_vertex_labels.ApplyRead([](const DatasetPartition<LabelSupportPair>& data) {
-      LOG(INFO) << "Read Frequent V labels in this Partition: " << data.size();
-      for (const auto& p : data) {
-        LOG(INFO) << "frequent_vertex_labels: " << p.first << " , " << p.second;
-        google::FlushLogFiles(google::INFO);
-      }
-    });
+    // frequent_vertex_labels.ApplyRead([](const DatasetPartition<LabelSupportPair>& data) {
+    //   LOG(INFO) << "Read Frequent V labels in this Partition: " << data.size();
+    //   for (const auto& p : data) {
+    //     LOG(INFO) << "frequent_vertex_labels: " << p.first << " , " << p.second;
+    //     google::FlushLogFiles(google::INFO);
+    //   }
+    // });
+
+    auto all_freq_vertex_labels = std::make_shared<axe::common::Dataset<LabelSupportPair>>(
+        frequent_vertex_labels.Broadcast([](const LabelSupportPair& p) { return 0; }, n_partitions));
 
     auto get_graphs_with_vertex_label = [](const DatasetPartition<Vertex>& src_graph, const DatasetPartition<LabelSupportPair>& labels) {
       LOG(INFO) << "Frequent V labels in this Partition: " << labels.size();
@@ -289,20 +282,19 @@ class FSMNaiveParallel : public Job {
       google::FlushLogFiles(google::INFO);
       return ret;
     };
-    auto all_freq_vertex_labels = std::make_shared<axe::common::Dataset<LabelSupportPair>>(
-        frequent_vertex_labels.Broadcast([](const LabelSupportPair& p) { return 0; }, n_partitions));
-    auto start_candidates = (*shared_graph).SharedDataMapPartitionWith(all_freq_vertex_labels.get(), get_graphs_with_vertex_label);
-    start_candidates.ApplyRead([](const DatasetPartition<Graph>& data) {
-      int gid = 0;
-      for (const auto& g : data) {
-        LOG(INFO) << "the start candidates " << gid++ << ": " << g.GetStr();
-      }
-      google::FlushLogFiles(google::INFO);
-    });
-    auto candidates = std::make_shared<axe::common::Dataset<Graph>>(start_candidates);
 
-    // auto extend_subgraph = [](const DatasetPartition<Vertex>& src_graph, const DatasetPartition<Graph>& subgraphs) {
-    auto extend_subgraph = [](const DatasetPartition<Graph>& subgraphs, const DatasetPartition<Vertex>& src_graph) {
+    auto candidates = std::make_shared<axe::common::Dataset<Graph>>(
+        (*shared_graph).SharedDataMapPartitionWith(all_freq_vertex_labels.get(), get_graphs_with_vertex_label));
+    // (*candidates).ApplyRead([](const DatasetPartition<Graph>& data) {
+    //   int gid = 0;
+    //   for (const auto& g : data) {
+    //     LOG(INFO) << "the start candidates " << gid++ << ": " << g.GetStr();
+    //   }
+    //   google::FlushLogFiles(google::INFO);
+    // });
+
+    auto extend_subgraph = [](const DatasetPartition<Vertex>& src_graph, const DatasetPartition<Graph>& subgraphs) {
+      // auto extend_subgraph = [](const DatasetPartition<Graph>& subgraphs, const DatasetPartition<Vertex>& src_graph) {
       LOG(INFO) << "Extending subgraphs: " << src_graph.size() << ", " << subgraphs.size();
       DatasetPartition<Graph> extended_subgraphs;
       for (const auto& subgraph : subgraphs) {
@@ -362,12 +354,16 @@ class FSMNaiveParallel : public Job {
         }
       }
       LOG(INFO) << "Extending subgraphs done." << subgraphs.size() << " --> " << extended_subgraphs.size();
+      int count = 0;
+      for (const auto& g : extended_subgraphs) {
+        LOG(INFO) << "frequent_subgraph_isomorphism: " << count++ << "th frequent subgraph, " << g.GetStr();
+      }
       google::FlushLogFiles(google::INFO);
       return extended_subgraphs;
     };
 
-    // auto frequent_subgraph_isomorphism = [minimal_support](const DatasetPartition<Vertex>& src_graph, const DatasetPartition<Graph>& subgraphs) {
-      auto frequent_subgraph_isomorphism = [minimal_support](const DatasetPartition<Graph>& subgraphs, const DatasetPartition<Vertex>& src_graph) {
+    auto frequent_subgraph_isomorphism = [minimal_support](const DatasetPartition<Vertex>& src_graph, const DatasetPartition<Graph>& subgraphs) {
+      // auto frequent_subgraph_isomorphism = [minimal_support](const DatasetPartition<Graph>& subgraphs, const DatasetPartition<Vertex>& src_graph) {
       // subgraph: a lot of candidate subgraphs
       // src_graph: the original big graph
       // progress: iterate over each subgraph, calculate its support in src_graph
@@ -413,22 +409,30 @@ class FSMNaiveParallel : public Job {
         }
         // Enumerate all possible graphs and its mapping
         std::stack<std::pair<std::shared_ptr<Graph>, std::shared_ptr<std::map<int, int>>>> cand_subgraphs;
+        // LOG(INFO) << "vertices mapping: " << vertices_mapping_vec.size();
+        // google::FlushLogFiles(google::INFO);
+        // add a empty graph to stack
+        auto cand_subgraph = std::make_shared<Graph>();
+        auto cand_map = std::make_shared<std::map<int, int>>();
+        cand_subgraphs.push(std::make_pair(cand_subgraph, cand_map));
         // Add first possible vertices to stack
-        auto first_sg_vertex = vertices_mapping_vec.at(0).first;
-        auto first_src_vertices = vertices_mapping_vec.at(0).second;
-        for (const auto& first_src_vertex : *first_src_vertices) {
-          auto cand_subgraph = std::make_shared<Graph>();
-          auto cand_map = std::make_shared<std::map<int, int>>();
+        // auto first_sg_vertex = vertices_mapping_vec.at(0).first;
+        // auto first_src_vertices = vertices_mapping_vec.at(0).second;
+        // for (const auto& first_src_vertex : *first_src_vertices) {
+        //   auto cand_subgraph = std::make_shared<Graph>();
+        //   auto cand_map = std::make_shared<std::map<int, int>>();
 
-          // subgraph of current candidate
-          cand_subgraph->AddVertex(first_src_vertex);
+        //   // subgraph of current candidate
+        //   cand_subgraph->AddVertex(first_src_vertex);
 
-          // map for current candidate subgraph
-          cand_map->insert({first_sg_vertex.GetId(), first_src_vertex.GetId()});
+        //   // map for current candidate subgraph
+        //   cand_map->insert({first_sg_vertex.GetId(), first_src_vertex.GetId()});
 
-          // add candidate to stack
-          cand_subgraphs.push(std::make_pair(cand_subgraph, cand_map));
-        }
+        //   // add candidate to stack
+        //   cand_subgraphs.push(std::make_pair(cand_subgraph, cand_map));
+        //   LOG(INFO) << "stack size LOC0: " << cand_subgraphs.size();
+        //   google::FlushLogFiles(google::INFO);
+        // }
         // number of isomorphism subgraphs in big graph
         size_t num_isomorphism = 0;
         // record vertex ids of subgraphs in big graph to avoid duplicate matching
@@ -442,6 +446,8 @@ class FSMNaiveParallel : public Job {
           // auto [cand_subgraph, cand_map] = cand_subgraphs.pop();
           auto cand_subgraph_size = cand_subgraph->GetVertices()->size();
 
+          // LOG(INFO) << "vertices_mapping_vec: " << vertices_mapping_vec.size() << " " << cand_subgraph_size;
+          // google::FlushLogFiles(google::INFO);
           auto sg_vertex = vertices_mapping_vec.at(cand_subgraph_size).first;
           auto src_vertices = vertices_mapping_vec.at(cand_subgraph_size).second;
           for (const auto& src_vertex : *src_vertices) {
@@ -530,6 +536,8 @@ class FSMNaiveParallel : public Job {
               }
             } else {
               cand_subgraphs.push(std::make_pair(new_cand_subgraph, new_cand_map));
+              // LOG(INFO) << "stack size LOC1: " << cand_subgraphs.size();
+              // google::FlushLogFiles(google::INFO);
             }
           }
         }
@@ -542,6 +550,25 @@ class FSMNaiveParallel : public Job {
       LOG(INFO) << "frequent_subgraphs done" << frequent_subgraphs.size();
       google::FlushLogFiles(google::INFO);
       return frequent_subgraphs;
+    };
+
+    auto combined_ext_freq = [extend_subgraph, frequent_subgraph_isomorphism, minimal_support](const DatasetPartition<Vertex>& src_graph,
+                                                                                               const DatasetPartition<Graph>& subgraphs) {
+      auto ext = extend_subgraph(src_graph, subgraphs);
+      int count = 0;
+      for (const auto& g : ext) {
+        LOG(INFO) << "combined_ext_freq: " << count++ << "th candidate, " << g.GetStr();
+      }
+      google::FlushLogFiles(google::INFO);
+      return frequent_subgraph_isomorphism(src_graph, ext);
+      // DatasetPartition<Graph> ret;
+      // int count = 0;
+      // for(const auto& g:subgraphs){
+      //   ret.push_back(g);
+      //   LOG(INFO) << "combined_ext_freq: " << count++ << "th subgraph, " << g.GetStr();
+      // }
+      // google::FlushLogFiles(google::INFO);
+      // return ret;
     };
 
     auto update_results = [](DatasetPartition<Graph>& results, const DatasetPartition<Graph>& new_candidate) {
@@ -568,23 +595,23 @@ class FSMNaiveParallel : public Job {
     // });
     auto shared_full_graph =
         std::make_shared<axe::common::Dataset<Vertex>>((*shared_graph).Broadcast([](const Vertex& v) { return 0; }, n_partitions));
-    auto iter_results = candidates;
+    // auto iter_results = candidates;
     for (size_t iter = 0; iter < n_iters; iter++) {
+      candidates = std::make_shared<axe::common::Dataset<Graph>>((*shared_full_graph).MapPartitionWith(candidates.get(), combined_ext_freq));
       // candidates =
-      //     std::make_shared<axe::common::Dataset<Graph>>((*shared_full_graph).MapPartitionWith(iter_results.get(), extend_subgraph));
-      //   iter_results = std::make_shared<axe::common::Dataset<Graph>>((*shared_full_graph).SharedDataMapPartitionWith(candidates.get(),
-      //   frequent_subgraph_isomorphism));
-      candidates = std::make_shared<axe::common::Dataset<Graph>>((*iter_results).MapPartitionWith(shared_full_graph.get(), extend_subgraph));
-      iter_results = std::make_shared<axe::common::Dataset<Graph>>(
-          (*candidates).MapPartitionWith(shared_full_graph.get(), frequent_subgraph_isomorphism));
-    //   results.UpdatePartitionWith(iter_results.get(), update_results);
-      (*iter_results).ApplyRead([iter](const DatasetPartition<Graph>& data) {
-        for (const auto& graph : data) {
-          LOG(INFO) << "frequent subgraph @iter" << iter << " : " << graph.GetStr();
-        }
-        google::FlushLogFiles(google::INFO);
-      });
-      iter_results = candidates;
+      //     std::make_shared<axe::common::Dataset<Graph>>((*shared_full_graph).SharedDataMapPartitionWith(iter_results.get(), extend_subgraph));
+      // iter_results = std::make_shared<axe::common::Dataset<Graph>>(
+      //     (*shared_full_graph).SharedDataMapPartitionWith(candidates.get(), frequent_subgraph_isomorphism));
+      // candidates = std::make_shared<axe::common::Dataset<Graph>>((*iter_results).MapPartitionWith(shared_full_graph.get(), extend_subgraph));
+      // iter_results = std::make_shared<axe::common::Dataset<Graph>>((*candidates).MapPartitionWith(shared_full_graph.get(),
+      // frequent_subgraph_isomorphism));
+      //   results.UpdatePartitionWith(iter_results.get(), update_results);
+      // (*candidates).ApplyRead([iter](const DatasetPartition<Graph>& data) {
+      //   for (const auto& graph : data) {
+      //     LOG(INFO) << "frequent subgraph @iter" << iter << " : " << graph.GetStr();
+      //   }
+      //   google::FlushLogFiles(google::INFO);
+      // });
     }
     // results.PartitionBy([](const Graph& g) { return 0; }, 1).ApplyRead([](const DatasetPartition<Graph>& data) {
     //   for (const auto& graph : data) {
