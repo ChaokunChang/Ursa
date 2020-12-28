@@ -1,6 +1,6 @@
 # Introduction
 
-In this project, we implemented an naive algorithm for frequent subgraph mining (FSM) on Ursa. After that, we tried to parallelize the naive algorithm to acceralte the mining progress.
+In this project, we implemented an naive algorithm for frequent subgraph mining (FSM) on Ursa. After that, we tried to parallelize the naive algorithm to accelerate the mining progress.
 
 ## Naive FSM algorithm
 
@@ -22,6 +22,8 @@ For each subgraph, extend a vertex to get some bigger candidates.
 A set of new candidates to be evaluated in next stage.
 
 ### Evaluating Stage
+
+First, for each vertex in candidate graph, we find all of its matching vertices in graph G, i.e., both sharing the same vertex id. Then for each vertex, there are multiple matching vertices. We enumerate all possible matching graphs in graph G, where a map records the id of vertex in candidate graph to the id of matching vertex in graph G. After that, for each pair of vertices in candidate graph, if there is an edge connecting them, the two matching vertices in matching graph must have an edge connecting them and share the same edge id. If we find the number of isomorphism subgraphs in graph G of a candidate graph is more than minimal frequency, it can be regarded as frequent isomorphism subgraph. Note that we remove those duplicate isomorphism subgraphs, so that there won't have redundancy.
 
 ## How to Parallelize FSM algortihm
 
