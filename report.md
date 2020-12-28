@@ -4,9 +4,22 @@ In this project, we implemented an naive algorithm for frequent subgraph mining 
 
 ## Naive FSM algorithm
 
-The Naive FSM algorithm consists of two stages: Extending stage and Evaluating stage.
+The Naive FSM algorithm consists of two stages: Extending stage and Evaluating stage. We will introduce the two stages in the following two sections.
 
 ### Extending Stage
+
+**Input:**
+
+* src_graph: The big Graph G to mine.
+* subgraphs: The frequent subgraphs got from the last iteration. For the first iteration, a subgraph will be composed of single vertex whose label is frequent.
+
+**Progress:**
+
+For each subgraph, extend a vertex to get some bigger candidates.
+
+**Output:**
+
+A set of new candidates to be evaluated in next stage.
 
 ### Evaluating Stage
 
@@ -25,3 +38,27 @@ However, such method have two drawbacks: 1) As the Graph G is partitioned, then 
 ### Parallelize Candidates
 
 In each mining iteration, we will generate a set of candidates to evaluate. we can split the candidates into multiple partitions, and evaluate the frequency of their local candidates. After that, we can also extend it on that partition, and then evaluate again. This methods requires that each partiton have a full replica of the Graph G, which will lead to too much storage overhead. However, the results is explict and we can still return directly after we know that the frequency achives mininal_frequency. 
+
+## How to run
+
+### Configuration
+
+We need 4 parameters in `.ini` file.
+
+* parallelism: the parallelism number.
+* n_iters: the number of iteration to run, also the biggest number of edges in the final frequent subgraphs.
+* minimal_support: the threshold to determine whether a subgraph is frequent or not.
+* graph: the location of the graph to mine.
+
+For the `graph` dataset, we need it to be the following format:
+
+``` txt
+v.id, v.label, v.neighbors.size(), neighbor_0.vid, neighbor_0.elabel, ... neighbor_i.vid, neighbor_i.elabel, ...
+...
+```
+
+### Results
+
+The frequent subgraphs will be printed in log files. here is an example.
+
+![algorithm outputs](https://github.com/ChaokunChang/Ursa/blob/master/report_fig_1.png)
