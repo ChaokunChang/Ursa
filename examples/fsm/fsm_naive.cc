@@ -387,22 +387,25 @@ class FSMNaive : public Job {
         }
         // Enumerate all possible graphs and its mapping
         std::stack<std::pair<std::shared_ptr<Graph>, std::shared_ptr<std::map<int, int>>>> cand_subgraphs;
+        auto cand_subgraph = std::make_shared<Graph>();
+        auto cand_map = std::make_shared<std::map<int, int>>();
+        cand_subgraphs.push(std::make_pair(cand_subgraph, cand_map));
         // Add first possible vertices to stack
-        auto first_sg_vertex = vertices_mapping_vec.at(0).first;
-        auto first_src_vertices = vertices_mapping_vec.at(0).second;
-        for (const auto& first_src_vertex : *first_src_vertices) {
-          auto cand_subgraph = std::make_shared<Graph>();
-          auto cand_map = std::make_shared<std::map<int, int>>();
+        // auto first_sg_vertex = vertices_mapping_vec.at(0).first;
+        // auto first_src_vertices = vertices_mapping_vec.at(0).second;
+        // for (const auto& first_src_vertex : *first_src_vertices) {
+        //   auto cand_subgraph = std::make_shared<Graph>();
+        //   auto cand_map = std::make_shared<std::map<int, int>>();
 
-          // subgraph of current candidate
-          cand_subgraph->AddVertex(first_src_vertex);
+        //   // subgraph of current candidate
+        //   cand_subgraph->AddVertex(first_src_vertex);
 
-          // map for current candidate subgraph
-          cand_map->insert({first_sg_vertex.GetId(), first_src_vertex.GetId()});
+        //   // map for current candidate subgraph
+        //   cand_map->insert({first_sg_vertex.GetId(), first_src_vertex.GetId()});
 
-          // add candidate to stack
-          cand_subgraphs.push(std::make_pair(cand_subgraph, cand_map));
-        }
+        //   // add candidate to stack
+        //   cand_subgraphs.push(std::make_pair(cand_subgraph, cand_map));
+        // }
         // number of isomorphism subgraphs in big graph
         size_t num_isomorphism = 0;
         // record vertex ids of subgraphs in big graph to avoid duplicate matching
