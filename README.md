@@ -23,7 +23,18 @@ A set of new candidates to be evaluated in next stage.
 
 ### Evaluating Stage
 
+**Input:**
+
+* src_graph: The big Graph G to mine.
+* subgraphs: The subgraphs to determine whether it's frequent isomorphism or not.
+
+**Progress:**
+
 First, for each vertex in candidate graph, we find all of its matching vertices in graph G, i.e., both sharing the same vertex id. Then for each vertex, there are multiple matching vertices. We enumerate all possible matching graphs in graph G, where a map records the id of vertex in candidate graph to the id of matching vertex in graph G. After that, for each pair of vertices in candidate graph, if there is an edge connecting them, the two matching vertices in matching graph must have an edge connecting them and share the same edge id. If we find the number of isomorphism subgraphs in graph G of a candidate graph is more than minimal frequency, it can be regarded as frequent isomorphism subgraph. Note that we remove those duplicate isomorphism subgraphs, so that there won't have redundancy.
+
+**Output:**
+
+A set of frequent isomorphism candidates.
 
 ## How to Parallelize FSM algortihm
 
